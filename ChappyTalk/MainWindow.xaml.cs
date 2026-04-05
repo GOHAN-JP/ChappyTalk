@@ -5,6 +5,10 @@
 •	音声速度の調整スライダー
 •	会話のテキスト保存（履歴として）
 •	システムプロンプトのカスタマイズ
+
+    4/3追加した機能
+    フォントサイズを変更できるようにした
+    トークン数と料金の表示を追加した
  */
 
 
@@ -59,6 +63,13 @@ namespace ChappyTalk
         private int maxHistory = 3;
         private string systemPrompt = "";
 
+        // ===== トークン使用量 =====
+        private int sessionPromptTokens = 0;
+        private int sessionCompletionTokens = 0;
+        private int totalPromptTokens = 0;
+        private int totalCompletionTokens = 0;
+        private double usdToJpy = 150.0; // ドル円レート
+
         // 話者情報
         private List<SpeakerInfo> speakers = new List<SpeakerInfo>();
 
@@ -109,6 +120,11 @@ namespace ChappyTalk
             systemPrompt = s.SystemPrompt;
             saveFolder = s.SaveFolder;
             SPEAKER = s.SpeakerId;
+            OutputText.FontSize = s.FontSize;
+            usdToJpy = s.UsdToJpy;
+            totalPromptTokens = s.TotalPromptTokens;
+            totalCompletionTokens = s.TotalCompletionTokens;
+            UpdateTokenDisplay();
         }
 
         private async Task InitializeQuery()
@@ -575,6 +591,25 @@ namespace ChappyTalk
                 .GetProperty("content")
                 .GetString();
 
+            // トークン使用量を取得・累積
+            if (doc.RootElement.TryGetProperty("usage", out var usage))
+            {
+                int promptTokens = usage.GetProperty("prompt_tokens").GetInt32();
+                int completionTokens = usage.GetProperty("completion_tokens").GetInt32();
+
+                sessionPromptTokens += promptTokens;
+                sessionCompletionTokens += completionTokens;
+                totalPromptTokens += promptTokens;
+                totalCompletionTokens += completionTokens;
+
+                // 累積トークンを設定に保存
+                appSettings.TotalPromptTokens = totalPromptTokens;
+                appSettings.TotalCompletionTokens = totalCompletionTokens;
+                appSettings.Save();
+
+                UpdateTokenDisplay();
+            }
+
             // AIの返答を履歴に追加
             conversationHistory.Add(new { role = "assistant", content = reply });
 
@@ -610,6 +645,42 @@ namespace ChappyTalk
                 return textElement.GetString();
 
             return "";
+        }
+
+        // =========================
+        // 💰 トークン使用量・料金表示
+        // =========================
+        private void UpdateTokenDisplay()
+        {
+            // gpt-4o-mini 料金: 入力 $0.15/1M, 出力 $0.60/1M
+            double sessionCostUsd = sessionPromptTokens * 0.15 / 1_000_000 + sessionCompletionTokens * 0.60 / 1_000_000;
+            double totalCostUsd = totalPromptTokens * 0.15 / 1_000_000 + totalCompletionTokens * 0.60 / 1_000_000;
+            double sessionCostJpy = sessionCostUsd * usdToJpy;
+            double totalCostJpy = totalCostUsd * usdToJpy;
+
+            int sessionTokens = sessionPromptTokens + sessionCompletionTokens;
+            int totalTokens = totalPromptTokens + totalCompletionTokens;
+
+            SessionTokenStatus.Text = $"📊 今回: {sessionTokens:#,0} tokens　約 {sessionCostJpy:F2}円";
+            TotalTokenStatus.Text = $"📈 累計: {totalTokens:#,0} tokens　約 {totalCostJpy:F2}円（${totalCostUsd:F4}）";
+        }
+
+        private void ClearTokens_Click(object sender, RoutedEventArgs e)
+        {
+            var result = MessageBox.Show("累計トークン数をリセットしますか？", "確認", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (result == MessageBoxResult.Yes)
+            {
+                totalPromptTokens = 0;
+                totalCompletionTokens = 0;
+                sessionPromptTokens = 0;
+                sessionCompletionTokens = 0;
+
+                appSettings.TotalPromptTokens = 0;
+                appSettings.TotalCompletionTokens = 0;
+                appSettings.Save();
+
+                UpdateTokenDisplay();
+            }
         }
 
         // =========================

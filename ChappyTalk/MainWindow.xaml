@@ -10,6 +10,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- トップパネル -->
@@ -75,6 +76,30 @@
                      VerticalScrollBarVisibility="Auto"
                      IsReadOnly="False"/>
         </Grid>
+
+        <!-- ステータスバー: トークン使用量・料金 -->
+        <Border Grid.Row="2" Background="#F0F0F0" Padding="5,3">
+            <DockPanel>
+                <Button x:Name="ClearTokensButton"
+                        Content="🗑 クリア" 
+                        DockPanel.Dock="Right"
+                        Width="70" Height="22"
+                        FontSize="11"
+                        Click="ClearTokens_Click"
+                        VerticalAlignment="Center"
+                        Margin="5,0,0,0"/>
+                <StackPanel>
+                    <TextBlock x:Name="SessionTokenStatus" 
+                               Text="📊 今回: 0 tokens" 
+                               FontSize="11"
+                               Foreground="#555"/>
+                    <TextBlock x:Name="TotalTokenStatus" 
+                               Text="📈 累計: 0 tokens" 
+                               FontSize="11"
+                               Foreground="#555"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
     </Grid>
 </Window>
         

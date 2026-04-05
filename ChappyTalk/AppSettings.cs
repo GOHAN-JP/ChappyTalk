@@ -15,6 +15,10 @@ namespace ChappyTalk
         public int EchoGuardDelay { get; set; } = 300;
         public int MaxHistory { get; set; } = 3;
         public int SpeakerId { get; set; } = 606865152;
+        public double FontSize { get; set; } = 18;
+        public double UsdToJpy { get; set; } = 150.0;
+        public int TotalPromptTokens { get; set; } = 0;
+        public int TotalCompletionTokens { get; set; } = 0;
         public string SaveFolder { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
 
         private static readonly string SettingsPath = Path.Combine(

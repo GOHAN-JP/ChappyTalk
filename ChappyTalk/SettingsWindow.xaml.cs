@@ -5,6 +5,7 @@ namespace ChappyTalk
     public partial class SettingsWindow : Window
     {
         public AppSettings Result { get; private set; }
+        private double _originalFontSize;
 
         public SettingsWindow(AppSettings settings)
         {
@@ -20,6 +21,9 @@ namespace ChappyTalk
             SilenceSlider.Value = settings.SilenceThreshold;
             EchoSlider.Value = settings.EchoGuardDelay;
             HistorySlider.Value = settings.MaxHistory;
+            FontSizeSlider.Value = settings.FontSize;
+            _originalFontSize = settings.FontSize;
+            UsdToJpyBox.Text = settings.UsdToJpy.ToString("F1");
         }
 
         private void SpeedSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -52,6 +56,17 @@ namespace ChappyTalk
             if (HistoryLabel != null) HistoryLabel.Text = ((int)HistorySlider.Value).ToString();
         }
 
+        private void FontSizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (FontSizeLabel != null) FontSizeLabel.Text = ((int)FontSizeSlider.Value).ToString();
+
+            // リアルタイムプレビュー: MainWindow の OutputText に反映
+            if (Owner is MainWindow main)
+            {
+                main.OutputText.FontSize = (int)FontSizeSlider.Value;
+            }
+        }
+
         private void Save_Click(object sender, RoutedEventArgs e)
         {
             Result = new AppSettings
@@ -64,7 +79,9 @@ namespace ChappyTalk
                 IntonationScale = IntonationSlider.Value,
                 SilenceThreshold = (float)SilenceSlider.Value,
                 EchoGuardDelay = (int)EchoSlider.Value,
-                MaxHistory = (int)HistorySlider.Value
+                MaxHistory = (int)HistorySlider.Value,
+                FontSize = (int)FontSizeSlider.Value,
+                UsdToJpy = double.TryParse(UsdToJpyBox.Text, out var rate) ? rate : 150.0
             };
 
             DialogResult = true;
@@ -73,6 +90,17 @@ namespace ChappyTalk
         private void Cancel_Click(object sender, RoutedEventArgs e)
         {
             DialogResult = false;
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            base.OnClosed(e);
+
+            // 保存以外で閉じた場合（キャンセル・×ボタン・Esc）は元のフォントサイズに戻す
+            if (DialogResult != true && Owner is MainWindow main)
+            {
+                main.OutputText.FontSize = _originalFontSize;
+            }
         }
     }
 }
