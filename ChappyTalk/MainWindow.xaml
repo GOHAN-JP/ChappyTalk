@@ -5,22 +5,48 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:ChappyTalk"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
+        Title="ChappyTalk" Height="450" Width="800"
+        Icon="app.ico"
+        Closing="Window_Closing">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- トップパネル -->
         <Border Grid.Row="0" Background="LightGray" Padding="5">
             <StackPanel Orientation="Horizontal">
-                <Button x:Name="MuteButton" 
-                        Content="🎤 マイクON" 
-                        Width="120" 
+                <Button x:Name="LogLoadButton" 
+                        Content="📂 ログ読込" 
+                        Width="100" 
                         Height="30"
-                        Click="MuteButton_Click"
-                        Background="LightGreen"/>
+                        Click="LogLoadButton_Click"
+                        Margin="10,0,0,0"
+                        Background="#D0E8FF"/>
+                <Button x:Name="LogPlayButton" 
+                        Content="▶️ ログ再生" 
+                        Width="100" 
+                        Height="30"
+                        Click="LogPlayButton_Click"
+                        Margin="10,0,0,0"
+                        Background="#D0FFD0"/>
+                <Button x:Name="LogStopButton" 
+                        Content="⏹ 停止" 
+                        Width="70" 
+                        Height="30"
+                        Click="LogStopButton_Click"
+                        Margin="5,0,0,0"
+                        Background="#FFD0D0"
+                        IsEnabled="False"/>
+                <Button x:Name="LogSaveButton" 
+                        Content="📝 ログ保存" 
+                        Width="100" 
+                        Height="30"
+                        Click="LogSaveButton_Click"
+                        Margin="10,0,0,0"
+                        Background="#E8D0FF"/>
                 <Button x:Name="SaveButton" 
                         Content="💾 選択部分を保存" 
                         Width="140" 
@@ -28,6 +54,12 @@
                         Click="SaveButton_Click"
                         Margin="10,0,0,0"
                         Background="LightBlue"/>
+                <Button x:Name="MuteButton" 
+                        Content="🎤 マイクON" 
+                        Width="120" 
+                        Height="30"
+                        Click="MuteButton_Click"
+                        Background="LightGreen"/>
                 <Button x:Name="FolderButton" 
                         Content="📁 保存フォルダー設定" 
                         Width="150" 
@@ -49,7 +81,8 @@
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="250"/>
-                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="238*"/>
+                <ColumnDefinition Width="37*"/>
             </Grid.ColumnDefinitions>
 
             <!-- 左側: キャラクター選択 -->
@@ -59,6 +92,16 @@
                                Text="🎭 キャラクター選択" 
                                FontWeight="Bold" 
                                Margin="5"/>
+                    <StackPanel DockPanel.Dock="Bottom" Margin="5,5,5,0">
+                        <TextBlock Text="🗣 自分の声の担当" 
+                                   FontWeight="Bold" 
+                                   FontSize="11"
+                                   Margin="0,0,0,3"/>
+                        <ComboBox x:Name="UserVoiceComboBox"
+                                  DisplayMemberPath="Name"
+                                  Height="26"
+                                  ToolTip="ログ再生時に自分の発言を読み上げるキャラクター"/>
+                    </StackPanel>
                     <ListBox x:Name="SpeakerListBox" 
                              DisplayMemberPath="Name"
                              SelectionChanged="SpeakerListBox_SelectionChanged"
@@ -69,12 +112,36 @@
             <!-- 右側: 会話履歴 -->
             <TextBox Grid.Column="1"
                      x:Name="OutputText" 
-                     Margin="10"
+                     Margin="10,10,10,10"
                      TextWrapping="Wrap"
                      AcceptsReturn="True"
                      VerticalScrollBarVisibility="Auto"
-                     IsReadOnly="False"/>
+                     IsReadOnly="False" Grid.ColumnSpan="2"/>
         </Grid>
+
+        <!-- ステータスバー: トークン使用量・料金 -->
+        <Border Grid.Row="2" Background="#F0F0F0" Padding="5,3">
+            <DockPanel>
+                <Button x:Name="ClearTokensButton"
+                        Content="🗑 クリア" 
+                        DockPanel.Dock="Left"
+                        Width="70" Height="22"
+                        FontSize="11"
+                        Click="ClearTokens_Click"
+                        VerticalAlignment="Center"
+                        Margin="0,0,5,0"/>
+                <StackPanel>
+                    <TextBlock x:Name="SessionTokenStatus" 
+                               Text="📊 今回: 0 tokens" 
+                               FontSize="11"
+                               Foreground="#555"/>
+                    <TextBlock x:Name="TotalTokenStatus" 
+                               Text="📈 累計: 0 tokens" 
+                               FontSize="11"
+                               Foreground="#555"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
     </Grid>
 </Window>
         

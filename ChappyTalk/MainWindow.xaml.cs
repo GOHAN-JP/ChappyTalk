@@ -1,10 +1,20 @@
-﻿
-/* 今後の追加機能アイデア
+﻿/* 今後の追加機能アイデア
 •	会話履歴のクリアボタン
 •	お気に入りキャラクター登録
 •	音声速度の調整スライダー
 •	会話のテキスト保存（履歴として）
 •	システムプロンプトのカスタマイズ
+
+    2026/4/3追加
+    フォントサイズを変更できるようにした
+    トークン数と料金の表示を追加した
+    予算クレジットの追加と超過警告機能を追加した（設定で予算上限を0にすると無制限、上限を超えると警告表示デフォルトは500円に設定）
+    ログの自動保存機能を追加（設定でオンオフ、保存先はマイドキュメントのChappyTalkLogsフォルダ、ファイル名はタイムスタンプ）
+
+    2026/4/6追加
+    ログの読み込み機能を追加（保存したログファイルを選択して内容を表示）
+    ログの再生機能を追加（ログの内容を音声で再生、AIの発言は現在選択中のキャラクターの声で、自分の発言はUserVoiceComboBoxで選んだキャラクターの声で再生）
+    ログの再生中に停止できるようにした
  */
 
 
@@ -59,11 +69,23 @@ namespace ChappyTalk
         private int maxHistory = 3;
         private string systemPrompt = "";
 
+        // ===== トークン使用量 =====
+        private int sessionPromptTokens = 0;
+        private int sessionCompletionTokens = 0;
+        private int totalPromptTokens = 0;
+        private int totalCompletionTokens = 0;
+        private double usdToJpy = 150.0; // ドル円レート
+        private double budgetLimitJpy = 0; // 予算上限（円）0=無制限
+        private bool budgetWarningShown = false; // 警告済みフラグ
+        private bool autoSaveLog = true; // ログ自動保存
+
         // 話者情報
         private List<SpeakerInfo> speakers = new List<SpeakerInfo>();
 
         // 音声保存フォルダー（デフォルトはマイドキュメント）
         private string saveFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+
+        private CancellationTokenSource? _logPlaybackCts;
 
         // HTTPクライアントを最適化（接続プーリング、Keep-Alive有効化）
         private static readonly HttpClient http = new HttpClient(new SocketsHttpHandler
@@ -109,6 +131,14 @@ namespace ChappyTalk
             systemPrompt = s.SystemPrompt;
             saveFolder = s.SaveFolder;
             SPEAKER = s.SpeakerId;
+            OutputText.FontSize = s.FontSize;
+            usdToJpy = s.UsdToJpy;
+            totalPromptTokens = s.TotalPromptTokens;
+            totalCompletionTokens = s.TotalCompletionTokens;
+            budgetLimitJpy = s.BudgetLimitJpy;
+            budgetWarningShown = false;
+            autoSaveLog = s.AutoSaveLog;
+            UpdateTokenDisplay();
         }
 
         private async Task InitializeQuery()
@@ -164,6 +194,8 @@ namespace ChappyTalk
 
                 // ListBoxにバインド
                 SpeakerListBox.ItemsSource = speakers;
+                UserVoiceComboBox.ItemsSource = speakers;
+                UserVoiceComboBox.SelectedIndex = 0;
 
                 // 現在のSPEAKERと一致するものを選択
                 var currentSpeaker = speakers.FirstOrDefault(s => s.Id == SPEAKER);
@@ -180,9 +212,9 @@ namespace ChappyTalk
             }
         }
 
-        // =========================
+        // =============================
         // 🎭 キャラクター選択イベント
-        // =========================
+        // =============================
         private void SpeakerListBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
             if (SpeakerListBox.SelectedItem is SpeakerInfo selectedSpeaker)
@@ -254,10 +286,196 @@ namespace ChappyTalk
             {
                 appSettings = settingsWindow.Result;
                 appSettings.SaveFolder = saveFolder; // フォルダーは別管理なので維持
+                appSettings.SpeakerId = SPEAKER; // キャラクターは別管理なので維持
+                appSettings.TotalPromptTokens = totalPromptTokens; // 累積トークンを維持
+                appSettings.TotalCompletionTokens = totalCompletionTokens;
                 appSettings.Save();
                 ApplySettings(appSettings);
                 OutputText.Text += "⚙️ 設定を保存しました\n";
                 OutputText.ScrollToEnd();
+            }
+        }
+
+        // =========================
+        // 📂 ログ読み込み
+        // =========================
+        private void LogLoadButton_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "ログファイルを開く",
+                Filter = "テキストファイル (*.txt)|*.txt|すべてのファイル (*.*)|*.*",
+                DefaultExt = ".txt"
+            };
+
+            if (dialog.ShowDialog() == true)
+            {
+                string content = System.IO.File.ReadAllText(dialog.FileName);
+                OutputText.Text = content;
+            }
+        }
+        
+        // =========================
+        // 📝 ログ保存
+        // =========================
+        private void LogSaveButton_Click(object sender, RoutedEventArgs e)
+        {
+            SaveLog(showMessage: true);
+        }
+
+        // =========================
+        // ▶️ ログ再生
+        // =========================
+        private async void LogPlayButton_Click(object sender, RoutedEventArgs e)
+        {
+            isSpeaking = true;
+            var lines = OutputText.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            if (lines.Length == 0)
+            {
+                isSpeaking = false;
+                return;
+            }
+            // AIの声 → 現在選択中のキャラクター
+            var aiSpeaker = SpeakerListBox.SelectedItem as SpeakerInfo;
+            // 自分の声 → UserVoiceComboBoxで選んだキャラクター
+            var userSpeaker = UserVoiceComboBox.SelectedItem as SpeakerInfo;
+
+            if (aiSpeaker == null)
+            {
+                MessageBox.Show("AIのキャラクターを選択してください。", "確認",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                isSpeaking = false;
+                return;
+            }
+            if (userSpeaker == null)
+            {
+                MessageBox.Show("自分の声の担当キャラクターを選択してください。", "確認",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                isSpeaking = false;
+                return;
+            }
+
+            _logPlaybackCts = new CancellationTokenSource();
+            LogPlayButton.IsEnabled = false;
+            LogStopButton.IsEnabled = true;
+
+            try
+            {
+                foreach (var line in lines)
+                {
+                    if (_logPlaybackCts.Token.IsCancellationRequested) break;
+
+                    var trimmed = line.Trim();
+                    if (string.IsNullOrEmpty(trimmed)) continue;
+
+                    string text;
+                    int speakerId;
+
+                    if (trimmed.Contains("🧑"))
+                    {
+                        int idx = trimmed.IndexOf("🧑");
+                        text = trimmed[(idx + "🧑".Length)..].Trim();
+                        speakerId = userSpeaker.Id;
+                    }
+                    else if (trimmed.Contains("🤖"))
+                    {
+                        int idx = trimmed.IndexOf("🤖");
+                        text = trimmed[(idx + "🤖".Length)..].Trim();
+                        speakerId = aiSpeaker.Id;
+                    }
+                    else
+                    {
+                        continue;
+                    }
+
+                    if (string.IsNullOrEmpty(text)) continue;
+
+                    await SpeakWithIdAsync(text, speakerId, _logPlaybackCts.Token);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"再生中にエラーが発生しました:\n{ex.Message}", "エラー",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                LogPlayButton.IsEnabled = true;
+                LogStopButton.IsEnabled = false;
+                _logPlaybackCts?.Dispose();
+                _logPlaybackCts = null;
+                isSpeaking = false;
+            }
+        }
+
+        // ==========
+        // ⏹ 停止
+        // ==========
+        private void LogStopButton_Click(object sender, RoutedEventArgs e)
+        {
+            _logPlaybackCts?.Cancel();
+        }
+
+        // ==============================
+        // ウインドウを閉じる時のイベント
+        // ==============================
+        private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+        {
+            if (autoSaveLog)
+            {
+                SaveLog(showMessage: false);
+            }
+        }
+
+        // ==============
+        // 📝 ログ保存
+        // ============
+        private void SaveLog(bool showMessage)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(OutputText.Text))
+                {
+                    if (showMessage)
+                    {
+                        OutputText.Text += "⚠️ 保存するログがありません\n";
+                        OutputText.ScrollToEnd();
+                    }
+                    return;
+                }
+
+                if (!Directory.Exists(saveFolder))
+                {
+                    Directory.CreateDirectory(saveFolder);
+                }
+
+                string fileName = $"Log{DateTime.Now:yyyy-MM-dd_HH-mm}.txt";
+                string filePath = Path.Combine(saveFolder, fileName);
+
+                // 同名ファイルがある場合は連番を追加
+                int counter = 1;
+                while (File.Exists(filePath))
+                {
+                    filePath = Path.Combine(saveFolder, $"Log{DateTime.Now:yyyy-MM-dd_HH-mm}_{counter}.txt");
+                    counter++;
+                }
+
+                File.WriteAllText(filePath, OutputText.Text, Encoding.UTF8);
+
+                if (showMessage)
+                {
+                    OutputText.Text += $"📝 ログを保存しました: {Path.GetFileName(filePath)}\n";
+                    OutputText.ScrollToEnd();
+                }
+            }
+            catch
+            {
+                if (showMessage)
+                {
+                    OutputText.Text += "❌ ログ保存失敗\n";
+                    OutputText.ScrollToEnd();
+                }
             }
         }
 
@@ -345,17 +563,6 @@ namespace ChappyTalk
                 OutputText.ScrollToEnd();
             }
         }
-        /*
-        private async Task InitializeQuery()
-        {
-            var res = await http.PostAsync(
-                $"{AIVIS_URL}/audio_query?text=テスト&speaker={SPEAKER}",
-                null
-            );
-
-            baseQueryJson = await res.Content.ReadAsStringAsync();
-        }
-        */
 
         // =========================
         // 🎤 自動録音
@@ -575,6 +782,25 @@ namespace ChappyTalk
                 .GetProperty("content")
                 .GetString();
 
+            // トークン使用量を取得・累積
+            if (doc.RootElement.TryGetProperty("usage", out var usage))
+            {
+                int promptTokens = usage.GetProperty("prompt_tokens").GetInt32();
+                int completionTokens = usage.GetProperty("completion_tokens").GetInt32();
+
+                sessionPromptTokens += promptTokens;
+                sessionCompletionTokens += completionTokens;
+                totalPromptTokens += promptTokens;
+                totalCompletionTokens += completionTokens;
+
+                // 累積トークンを設定に保存
+                appSettings.TotalPromptTokens = totalPromptTokens;
+                appSettings.TotalCompletionTokens = totalCompletionTokens;
+                appSettings.Save();
+
+                UpdateTokenDisplay();
+            }
+
             // AIの返答を履歴に追加
             conversationHistory.Add(new { role = "assistant", content = reply });
 
@@ -610,6 +836,77 @@ namespace ChappyTalk
                 return textElement.GetString();
 
             return "";
+        }
+
+        // =============================
+        // 💰 トークン使用量・料金表示
+        // =============================
+        private void UpdateTokenDisplay()
+        {
+            // gpt-4o-mini 料金: 入力 $0.15/1M, 出力 $0.60/1M
+            double sessionCostUsd = sessionPromptTokens * 0.15 / 1_000_000 + sessionCompletionTokens * 0.60 / 1_000_000;
+            double totalCostUsd = totalPromptTokens * 0.15 / 1_000_000 + totalCompletionTokens * 0.60 / 1_000_000;
+            double sessionCostJpy = sessionCostUsd * usdToJpy;
+            double totalCostJpy = totalCostUsd * usdToJpy;
+
+            int sessionTokens = sessionPromptTokens + sessionCompletionTokens;
+            int totalTokens = totalPromptTokens + totalCompletionTokens;
+
+            SessionTokenStatus.Text = $"📊 今回: {sessionTokens:#,0} tokens　約 {sessionCostJpy:F2}円";
+
+            // 予算上限の表示
+            if (budgetLimitJpy > 0)
+            {
+                double remaining = budgetLimitJpy - totalCostJpy;
+                string budgetText = remaining >= 0
+                    ? $"　残り約 {remaining:F2}円"
+                    : $"　⚠️ 予算超過 {Math.Abs(remaining):F2}円";
+
+                TotalTokenStatus.Text = $"📈 累計: {totalTokens:#,0} tokens　約 {totalCostJpy:F2}円 / {budgetLimitJpy:F0}円{budgetText}";
+                TotalTokenStatus.Foreground = remaining < 0
+                    ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.Red)
+                    : remaining < budgetLimitJpy * 0.2
+                        ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.OrangeRed)
+                        : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x55, 0x55, 0x55));
+
+                // 予算超過警告（1回だけ）
+                if (remaining < 0 && !budgetWarningShown)
+                {
+                    budgetWarningShown = true;
+                    OutputText.Text += $"⚠️ 予算上限（{budgetLimitJpy:F0}円）を超えました！設定で予算を見直すかトークンをクリアしてください\n";
+                    OutputText.ScrollToEnd();
+                }
+            }
+            else
+            {
+                TotalTokenStatus.Text = $"📈 累計: {totalTokens:#,0} tokens　約 {totalCostJpy:F2}円（${totalCostUsd:F4}）";
+                TotalTokenStatus.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x55, 0x55, 0x55));
+            }
+        }
+        /*=========================
+         💣 トークンリセット
+         =========================
+         予算管理のため、累計トークン数をリセットする機能を追加
+         設定画面からもリセット可能に（予算管理のリスタート用）
+         リセットするとセッションと累計の両方が0になる
+         リセット前に確認ダイアログを表示して誤操作を防止
+         */
+        private void ClearTokens_Click(object sender, RoutedEventArgs e)
+        {
+            var result = MessageBox.Show("累計トークン数をリセットしますか？", "確認", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (result == MessageBoxResult.Yes)
+            {
+                totalPromptTokens = 0;
+                totalCompletionTokens = 0;
+                sessionPromptTokens = 0;
+                sessionCompletionTokens = 0;
+
+                appSettings.TotalPromptTokens = 0;
+                appSettings.TotalCompletionTokens = 0;
+                appSettings.Save();
+
+                UpdateTokenDisplay();
+            }
         }
 
         // =========================
@@ -887,6 +1184,43 @@ namespace ChappyTalk
                 writer.Write(silenceBytes, 0, silenceBytes.Length);
             }
             return outStream.ToArray();
+        }
+
+        private async Task SpeakWithIdAsync(string text, int speakerId, CancellationToken ct)
+        {
+            using var http = new HttpClient();
+
+            // 1. audio_query 取得
+            var queryRes = await http.PostAsync(
+                $"{AIVIS_URL}/audio_query?text={Uri.EscapeDataString(text)}&speaker={speakerId}", null, ct);
+            queryRes.EnsureSuccessStatusCode();
+            var queryJson = await queryRes.Content.ReadAsStringAsync(ct);
+
+            // 2. synthesis で音声データ取得
+            var synthContent = new StringContent(queryJson, System.Text.Encoding.UTF8, "application/json");
+            var synthRes = await http.PostAsync(
+                $"{AIVIS_URL}/synthesis?speaker={speakerId}", synthContent, ct);
+            synthRes.EnsureSuccessStatusCode();
+            var audioData = await synthRes.Content.ReadAsByteArrayAsync(ct);
+
+            // 3. NAudio で再生（完了まで待機）
+            ct.ThrowIfCancellationRequested();
+            using var ms = new System.IO.MemoryStream(audioData);
+            using var reader = new NAudio.Wave.WaveFileReader(ms);
+            using var waveOut = new NAudio.Wave.WaveOutEvent();
+            var tcs = new TaskCompletionSource<bool>();
+
+            waveOut.PlaybackStopped += (s, e) => tcs.TrySetResult(true);
+            waveOut.Init(reader);
+            waveOut.Play();
+
+            // キャンセル対応: キャンセルされたら再生停止
+            using var reg = ct.Register(() =>
+            {
+                waveOut.Stop();
+                tcs.TrySetCanceled();
+            });
+            await tcs.Task;
         }
     }
 }
