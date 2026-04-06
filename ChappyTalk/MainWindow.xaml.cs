@@ -910,6 +910,42 @@ namespace ChappyTalk
         }
 
         // =========================
+        // 💰 トークン使用量・料金表示
+        // =========================
+        private void UpdateTokenDisplay()
+        {
+            // gpt-4o-mini 料金: 入力 $0.15/1M, 出力 $0.60/1M
+            double sessionCostUsd = sessionPromptTokens * 0.15 / 1_000_000 + sessionCompletionTokens * 0.60 / 1_000_000;
+            double totalCostUsd = totalPromptTokens * 0.15 / 1_000_000 + totalCompletionTokens * 0.60 / 1_000_000;
+            double sessionCostJpy = sessionCostUsd * usdToJpy;
+            double totalCostJpy = totalCostUsd * usdToJpy;
+
+            int sessionTokens = sessionPromptTokens + sessionCompletionTokens;
+            int totalTokens = totalPromptTokens + totalCompletionTokens;
+
+            SessionTokenStatus.Text = $"📊 今回: {sessionTokens:#,0} tokens　約 {sessionCostJpy:F2}円";
+            TotalTokenStatus.Text = $"📈 累計: {totalTokens:#,0} tokens　約 {totalCostJpy:F2}円（${totalCostUsd:F4}）";
+        }
+
+        private void ClearTokens_Click(object sender, RoutedEventArgs e)
+        {
+            var result = MessageBox.Show("累計トークン数をリセットしますか？", "確認", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (result == MessageBoxResult.Yes)
+            {
+                totalPromptTokens = 0;
+                totalCompletionTokens = 0;
+                sessionPromptTokens = 0;
+                sessionCompletionTokens = 0;
+
+                appSettings.TotalPromptTokens = 0;
+                appSettings.TotalCompletionTokens = 0;
+                appSettings.Save();
+
+                UpdateTokenDisplay();
+            }
+        }
+
+        // =========================
         // 🔊 音声合成（AIVIS）
         // =========================
         private async Task Speak(string text)
