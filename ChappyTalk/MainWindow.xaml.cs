@@ -15,6 +15,10 @@
     ログの読み込み機能を追加（保存したログファイルを選択して内容を表示）
     ログの再生機能を追加（ログの内容を音声で再生、AIの発言は現在選択中のキャラクターの声で、自分の発言はUserVoiceComboBoxで選んだキャラクターの声で再生）
     ログの再生中に停止できるようにした
+
+    v1.0.2 2026/4/7追加
+    ログの保存フォルダー設定を設定画面に移動した
+    ログ再生の一時停止と再開機能を追加した（再生中に一時停止ボタンを押すとセマフォで再生側を待たせて、再度押すとセマフォを解放して再生を続行する）
  */
 
 
@@ -42,23 +46,20 @@ namespace ChappyTalk
         // ===== 音声関連 =====
         WaveInEvent waveIn;
         WaveFileWriter writer;
-        private WaveOutEvent outputDevice;
-        private AudioFileReader audioFile;
         private TaskCompletionSource<bool> recordingStoppedTcs;
 
         // ===== 状態管理 =====
         bool isRecording = false;
         bool isSpeaking = false; // ← エコー防止
         bool isMuted = false; // マイクミュート状態
-
+        private SemaphoreSlim isLogPause = new SemaphoreSlim(1, 1);
         float silenceThreshold = 0.02f;
         int silenceCount = 0;
-        int silenceLimit = 5;
 
         // ===== API =====
         private string OPENAI_API_KEY = "";
         private string AIVIS_URL = "http://127.0.0.1:10101";
-        private int SPEAKER = 606865152;
+        private int SPEAKER = 0;
 
         // ===== 設定 =====
         private AppSettings appSettings;
@@ -83,8 +84,8 @@ namespace ChappyTalk
         private List<SpeakerInfo> speakers = new List<SpeakerInfo>();
 
         // 音声保存フォルダー（デフォルトはマイドキュメント）
-        private string saveFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-
+        public  string saveFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        // ログ再生のキャンセルトークン
         private CancellationTokenSource? _logPlaybackCts;
 
         // HTTPクライアントを最適化（接続プーリング、Keep-Alive有効化）
@@ -252,27 +253,6 @@ namespace ChappyTalk
         }
 
         // =========================
-        // 📁 保存フォルダー設定
-        // =========================
-        private void FolderButton_Click(object sender, RoutedEventArgs e)
-        {
-            var dialog = new Microsoft.Win32.OpenFolderDialog
-            {
-                Title = "音声ファイルの保存先フォルダーを選択",
-                InitialDirectory = saveFolder
-            };
-
-            if (dialog.ShowDialog() == true)
-            {
-                saveFolder = dialog.FolderName;
-                appSettings.SaveFolder = saveFolder;
-                appSettings.Save();
-                OutputText.Text += $"📁 保存先を設定: {saveFolder}\n";
-                OutputText.ScrollToEnd();
-            }
-        }
-
-        // =========================
         // ⚙️ 設定画面
         // =========================
         private void SettingsButton_Click(object sender, RoutedEventArgs e)
@@ -358,7 +338,7 @@ namespace ChappyTalk
             _logPlaybackCts = new CancellationTokenSource();
             LogPlayButton.IsEnabled = false;
             LogStopButton.IsEnabled = true;
-
+            LogPauseButton.IsEnabled = true;
             try
             {
                 foreach (var line in lines)
@@ -391,6 +371,8 @@ namespace ChappyTalk
                     if (string.IsNullOrEmpty(text)) continue;
 
                     await SpeakWithIdAsync(text, speakerId, _logPlaybackCts.Token);
+                    await isLogPause.WaitAsync(_logPlaybackCts.Token);
+                    isLogPause.Release();
                 }
             }
             catch (OperationCanceledException) { }
@@ -403,12 +385,40 @@ namespace ChappyTalk
             {
                 LogPlayButton.IsEnabled = true;
                 LogStopButton.IsEnabled = false;
+                LogPauseButton.IsEnabled = false;
                 _logPlaybackCts?.Dispose();
                 _logPlaybackCts = null;
                 isSpeaking = false;
+                _isPaused = false;
+                if (isLogPause.CurrentCount == 0)
+                {
+                    isLogPause.Release();
+                }
+                LogPauseButton.Content = "一時停止";
+
             }
         }
-
+        // =========================
+        // ▶️ ログ一時停止
+        // =========================
+        private bool _isPaused = false;
+        private async void LogPauseButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_isPaused)
+            {
+                // 【一時停止】セマフォを奪い取って、再生側を待たせる
+                await isLogPause.WaitAsync();
+                _isPaused = true;
+                LogPauseButton.Content = "再開"; // ボタン表示変更など
+            }
+            else
+            {
+                // 【再開】セマフォを解放して、再生側を通す
+                isLogPause.Release();
+                _isPaused = false;
+                LogPauseButton.Content = "一時停止";
+            }
+        }
         // ==========
         // ⏹ 停止
         // ==========
@@ -567,6 +577,18 @@ namespace ChappyTalk
         // =========================
         // 🎤 自動録音
         // =========================
+        // 音声の大きさをリアルタイムで監視して、一定以上の音が続いたら録音開始、無音が続いたら録音停止
+        // 録音が停止したら、すぐにWhisper APIでテキスト化してChatGPTに投げる → 返答をもらったらAIVISで喋る
+        // 録音中は「🎤 録音中...」と表示して、録音が終わったら実際の発言テキストに置き換える
+        // 無音判定は、50msごとに音量をチェックして、一定回数以上無音が続いたら録音停止（語尾切れ防止のため、無音でも少し余韻を録る）
+        // 録音開始のトリガーは、音量がsilenceThresholdを超えたとき。録音停止のトリガーは、無音がsilenceLimit回続いたとき。ただし、発話の長さに応じてsilenceLimitを動的に調整（短い発話は長めに待つ、長い発話は早めに切る）して、より自然な録音体験を実現。
+        // 録音中は、isRecordingフラグを立てて、DataAvailableイベントで録音データをファイルに書き込む。録音停止の際には、waveIn.StopRecording()を呼び出して録音を終了し、RecordingStoppedイベントでファイルを閉じると同時にテキスト化とAI処理を開始する。
+        // 録音中は、isSpeakingフラグを立てて、AIの返答を喋っている間は録音をトリガーしないようにして、エコーや誤認識を防止する。
+        // マイクミュート機能も追加して、ユーザーが任意のタイミングで録音を一時的に無効化できるようにする。ミュート中は、DataAvailableイベントで録音トリガーを無視する。
+        // 録音開始の際には、録音ファイルを"mic.wav"として保存する。録音停止後にこのファイルをWhisper APIに送信してテキスト化する。テキスト化が完了したら、このファイルは削除しても良い。
+        // 録音の余韻を録るために、無音判定の際にも最後の数バッファは録音し続ける。これにより、語尾が切れるのを防止する。
+        // 録音開始からの時間も考慮して、最低録音時間を設ける。これにより、誤爆で短い無音が入っただけで録音が停止するのを防止する。
+        
         private void StartAutoRecording()
         {
             waveIn = new WaveInEvent();
@@ -612,7 +634,6 @@ namespace ChappyTalk
                             OutputText.ScrollToEnd();
                         });
                     }
-
                     writer?.Write(a.Buffer, 0, a.BytesRecorded);
                 }
                 // =========================
@@ -677,6 +698,11 @@ namespace ChappyTalk
         // =========================
         // 🎤 → 🤖 → 🔊
         // =========================
+        // 録音が終わったら、まずWhisper APIでテキスト化 → ChatGPTに投げて返答をもらう → AIVISで喋る
+        // 録音が無音だった場合は、テキスト化しても空になるので、その場合は「🎤 録音中...」の表示を削除して何もしない
+        // 録音があった場合は、まず「🎤 録音中...」を実際の発言テキストに置き換えて表示 → ChatGPTの返答も表示 → 文章を分割して順番に喋る（長文もスムーズに）
+        // 文章分割は、句点や改行で自然に分割するための正規表現を使用。50文字以上の長い文を分割する際に、できるだけ自然な区切りで分割するための関数を作成。句点（。）、感嘆符（！）、疑問符（？）で最初の文を切り出し、残りを次の文として返す。句点がない場合は、単純に最初の50文字を切り出す。
+        // 例: 「こんにちは！今日はいい天気ですね。明日はどうでしょう？」 → 「こんにちは！」 と 「今日はいい天気ですね。明日はどうでしょう？」
         private async Task ProcessVoice()
         {
             string text = await SpeechToText();
@@ -714,6 +740,14 @@ namespace ChappyTalk
                 await Speak(rest);
             }
         }
+        // =========================
+        // 📝 文章分割
+        // =========================
+        // 句点や改行で自然に分割するための正規表現を使用
+        // 50文字以上の長い文を分割する際に、できるだけ自然な区切りで分割するための関数
+        // 句点（。）、感嘆符（！）、疑問符（？）で最初の文を切り出し、残りを次の文として返す
+        // 句点がない場合は、単純に最初の50文字を切り出す
+        // 例: 「こんにちは！今日はいい天気ですね。明日はどうでしょう？」 → 「こんにちは！」 と 「今日はいい天気ですね。明日はどうでしょう？」
 
         private (string first, string rest) SplitFirstSentence(string text)
         {
@@ -732,6 +766,12 @@ namespace ChappyTalk
         // =========================
         // 🤖 ChatGPT
         // =========================
+        // 会話履歴を管理して、より自然な対話を実現
+        // トークン使用量を取得して、料金表示と予算管理に活用
+        // システムプロンプトを追加して、キャラクターの性格や話し方を指定可能に
+        // 会話履歴は最大数を設定して古いものから削除（料金節約のため）
+        // APIのレスポンスからトークン使用量を取得して、セッションと累計の両方を更新
+        // 料金表示はドル円レートを考慮して日本円で表示、予算上限を設定して超過警告も表示
         private async Task<string> AskGPT(string input)
         {
             http.DefaultRequestHeaders.Authorization =
@@ -810,6 +850,7 @@ namespace ChappyTalk
         // =========================
         // 🎤 音声認識
         // =========================
+        // OpenAIのWhisper APIを使って録音した音声をテキストに変換
         private async Task<string> SpeechToText()
         {
             http.DefaultRequestHeaders.Authorization =
@@ -841,6 +882,7 @@ namespace ChappyTalk
         // =============================
         // 💰 トークン使用量・料金表示
         // =============================
+        // gpt-4o-mini 料金: 入力 $0.15/1M, 出力 $0.60/1M
         private void UpdateTokenDisplay()
         {
             // gpt-4o-mini 料金: 入力 $0.15/1M, 出力 $0.60/1M
@@ -913,6 +955,7 @@ namespace ChappyTalk
         // =========================
         // 🔊 音声合成（AIVIS）
         // =========================
+        // 文章を分割して順番に再生する方式に変更（長文もスムーズに）
         private async Task Speak(string text)
         {
             isSpeaking = true;
@@ -981,7 +1024,13 @@ namespace ChappyTalk
                 isSpeaking = false;
             }
         }
-
+        /*
+         * テキストを自然な区切りで分割する関数
+         * 句読点（。！？）を優先して分割し、さらに長い部分は「、」や空白で分割して自然な読み上げを実現
+         * text: 分割したいテキスト
+         * maxLength: 1チャンクあたりの最大文字数（目安）
+         * 戻り値: 分割されたテキストのリスト
+         */
         private List<string> SplitText(string text, int maxLength)
         {
             var result = new List<string>();
@@ -1078,6 +1127,12 @@ namespace ChappyTalk
             return await CreateAudio(text);
         }
 
+        /*
+         * AIVIS APIを呼び出してテキストから音声データを生成する
+         * text: 音声化したいテキスト
+         * 戻り値: WAV形式の音声データ（byte配列）
+         * 例外発生時はエラーメッセージを含む例外をスロー
+         */
         private async Task<byte[]> CreateAudio(string text)
         {
             try
@@ -1140,7 +1195,10 @@ namespace ChappyTalk
             }
         }
 
-
+        /*
+         * メモリ上のWAVデータをNAudioで再生する
+         * audioBytes: WAV形式の音声データ
+         */
         private async Task PlaySoundFromMemory(byte[] audioBytes)
         {
             var tcs = new TaskCompletionSource<bool>();
@@ -1167,6 +1225,12 @@ namespace ChappyTalk
             // 再生完了まで待つ
             await tcs.Task;
         }
+
+        /*
+         * 指定したWAVデータの前後に無音を追加する
+         * wavData: 元のWAVデータ
+         * milliseconds: 追加する無音の長さ（ミリ秒）
+         */
         private byte[] AddSilence(byte[] wavData, int milliseconds = 1050)
         {
             using var ms = new MemoryStream(wavData);
@@ -1186,7 +1250,11 @@ namespace ChappyTalk
             }
             return outStream.ToArray();
         }
-
+        /* AIVISで音声生成して再生する（話者ID指定版）
+         * text: 話すテキスト
+         * speakerId: AIVISの話者ID
+         * ct: キャンセルトークン（再生途中で停止できるように）
+         */
         private async Task SpeakWithIdAsync(string text, int speakerId, CancellationToken ct)
         {
             using var http = new HttpClient();

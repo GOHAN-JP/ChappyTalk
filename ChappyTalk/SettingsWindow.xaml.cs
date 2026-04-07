@@ -26,6 +26,7 @@ namespace ChappyTalk
             UsdToJpyBox.Text = settings.UsdToJpy.ToString("F1");
             BudgetLimitBox.Text = settings.BudgetLimitJpy > 0 ? settings.BudgetLimitJpy.ToString("F0") : "0";
             AutoSaveLogCheck.IsChecked = settings.AutoSaveLog;
+            SaveFolder.Text = settings.SaveFolder;
         }
 
         private void SpeedSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -68,6 +69,24 @@ namespace ChappyTalk
                 main.OutputText.FontSize = (int)FontSizeSlider.Value;
             }
         }
+        private void FolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = "音声ファイルの保存先フォルダーを選択",
+                InitialDirectory = SaveFolder.Text
+            };
+
+            if (dialog.ShowDialog() == true)
+            {
+                string saveFolder = dialog.FolderName;
+                SaveFolder.Text = saveFolder;
+                if (Owner is MainWindow main)
+                {
+                    main.saveFolder = saveFolder;
+                }
+            }
+        }
 
         private void Save_Click(object sender, RoutedEventArgs e)
         {
@@ -85,7 +104,8 @@ namespace ChappyTalk
                 FontSize = (int)FontSizeSlider.Value,
                 UsdToJpy = double.TryParse(UsdToJpyBox.Text, out var rate) ? rate : 150.0,
                 BudgetLimitJpy = double.TryParse(BudgetLimitBox.Text, out var budget) ? budget : 0,
-                AutoSaveLog = AutoSaveLogCheck.IsChecked == true
+                AutoSaveLog = AutoSaveLogCheck.IsChecked == true,
+                SaveFolder = SaveFolder.Text
             };
 
             DialogResult = true;

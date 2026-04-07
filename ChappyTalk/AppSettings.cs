@@ -21,7 +21,7 @@ namespace ChappyTalk
         public int TotalCompletionTokens { get; set; } = 0;
         public double BudgetLimitJpy { get; set; } = 500; // 0=無制限
         public bool AutoSaveLog { get; set; } = true;
-        public string SaveFolder { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        public string SaveFolder { get; set; } = "";
 
         private static readonly string SettingsPath = Path.Combine(
             AppDomain.CurrentDomain.BaseDirectory, "settings.json");

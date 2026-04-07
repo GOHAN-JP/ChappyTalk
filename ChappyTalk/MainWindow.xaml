@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:ChappyTalk"
         mc:Ignorable="d"
-        Title="ChappyTalk" Height="450" Width="800"
+        Title="ChappyTalk" Height="450" Width="1000"
         Icon="app.ico"
         Closing="Window_Closing">
     <Grid>
@@ -32,6 +32,14 @@
                         Click="LogPlayButton_Click"
                         Margin="10,0,0,0"
                         Background="#D0FFD0"/>
+                <Button x:Name="LogPauseButton" 
+                        Content="⏸ 一時停止" 
+                        Width="100" 
+                        Height="30"
+                        Click="LogPauseButton_Click"
+                        Margin="10,0,0,0"
+                        Background="#88D0FFD0"
+                        IsEnabled="False"/>
                 <Button x:Name="LogStopButton" 
                         Content="⏹ 停止" 
                         Width="70" 
@@ -60,13 +68,6 @@
                         Height="30"
                         Click="MuteButton_Click"
                         Background="LightGreen"/>
-                <Button x:Name="FolderButton" 
-                        Content="📁 保存フォルダー設定" 
-                        Width="150" 
-                        Height="30"
-                        Click="FolderButton_Click"
-                        Margin="10,0,0,0"
-                        Background="LightYellow"/>
                 <Button x:Name="SettingsButton" 
                         Content="⚙️ 設定" 
                         Width="80" 
