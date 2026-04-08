@@ -58,8 +58,7 @@ namespace ChappyTalk
         // ===== API =====
         private string OPENAI_API_KEY = "";
         private string AIVIS_URL = "http://127.0.0.1:10101";
-        private int SPEAKER = 0;
-        private int USER_SPEAKER = 0;
+        private int SPEAKER = 606865152;
 
         // ===== 設定 =====
         private AppSettings appSettings;
@@ -132,7 +131,6 @@ namespace ChappyTalk
             systemPrompt = s.SystemPrompt;
             saveFolder = s.SaveFolder;
             SPEAKER = s.SpeakerId;
-            USER_SPEAKER = s.UserSpeakerId;
             OutputText.FontSize = s.FontSize;
             usdToJpy = s.UsdToJpy;
             totalPromptTokens = s.TotalPromptTokens;
@@ -197,6 +195,7 @@ namespace ChappyTalk
                 // ListBoxにバインド
                 SpeakerListBox.ItemsSource = speakers;
                 UserVoiceComboBox.ItemsSource = speakers;
+                UserVoiceComboBox.SelectedIndex = 0;
 
                 // 現在のSPEAKERと一致するものを選択
                 var currentSpeaker = speakers.FirstOrDefault(s => s.Id == SPEAKER);
@@ -205,43 +204,23 @@ namespace ChappyTalk
                     SpeakerListBox.SelectedItem = currentSpeaker;
                 }
 
-                // 現在のUSER_SPEAKERと一致するものを選択
-                var currentUserSpeaker = speakers.FirstOrDefault(s => s.Id == USER_SPEAKER);
-                if (currentUserSpeaker != null)
-                {
-                    UserVoiceComboBox.SelectedItem = currentUserSpeaker;
-                }
                 OutputText.Text = $"✅ {speakers.Count}個のキャラクターを読み込みました\n\n";
             }
             catch (Exception ex)
             {
-                OutputText.Text = $"⚠️ AivisSpeechを起動して下さい: {ex.Message}\n";
+                OutputText.Text = $"⚠️ 話者一覧の取得に失敗: {ex.Message}\n";
             }
         }
 
-        // ===============================
-        // 🎭 AIキャラクター選択イベント
-        // ===============================
+        // =============================
+        // 🎭 キャラクター選択イベント
+        // =============================
         private void SpeakerListBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
             if (SpeakerListBox.SelectedItem is SpeakerInfo selectedSpeaker)
             {
                 SPEAKER = selectedSpeaker.Id;
                 appSettings.SpeakerId = SPEAKER;
-                appSettings.Save();
-                OutputText.Text += $"🎭 {selectedSpeaker.Name} に変更しました\n";
-                OutputText.ScrollToEnd();
-            }
-        }
-        // ==================================
-        // 🎭 自分のキャラクター選択イベント
-        // ==================================
-        private void UserVoiceComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
-        {
-            if (UserVoiceComboBox.SelectedItem is SpeakerInfo selectedSpeaker)
-            {
-                USER_SPEAKER = selectedSpeaker.Id;
-                appSettings.UserSpeakerId = USER_SPEAKER;
                 appSettings.Save();
                 OutputText.Text += $"🎭 {selectedSpeaker.Name} に変更しました\n";
                 OutputText.ScrollToEnd();
