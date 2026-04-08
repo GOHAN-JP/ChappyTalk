@@ -99,7 +99,6 @@
                                    Margin="0,0,0,3"/>
                         <ComboBox x:Name="UserVoiceComboBox"
                                   DisplayMemberPath="Name"
-                                  SelectionChanged="UserVoiceComboBox_SelectionChanged"
                                   Height="26"
                                   ToolTip="ログ再生時に自分の発言を読み上げるキャラクター"/>
                     </StackPanel>
