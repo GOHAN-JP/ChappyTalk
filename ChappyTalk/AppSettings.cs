@@ -14,7 +14,8 @@ namespace ChappyTalk
         public float SilenceThreshold { get; set; } = 0.02f;
         public int EchoGuardDelay { get; set; } = 300;
         public int MaxHistory { get; set; } = 3;
-        public int SpeakerId { get; set; } = 606865152;
+        public int SpeakerId { get; set; } = 0;
+        public int UserSpeakerId { get; set; } = 0;
         public double FontSize { get; set; } = 18;
         public double UsdToJpy { get; set; } = 150.0;
         public int TotalPromptTokens { get; set; } = 0;
