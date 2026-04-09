@@ -8,6 +8,7 @@ namespace ChappyTalk
         public string SystemPrompt { get; set; } = "";
         public string OpenAiApiKey { get; set; } = "";
         public string AivisUrl { get; set; } = "http://127.0.0.1:10101";
+        public string SaveFolder { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         public double SpeedScale { get; set; } = 1.1;
         public double PitchScale { get; set; } = 0.0;
         public double IntonationScale { get; set; } = 1.2;
@@ -22,8 +23,6 @@ namespace ChappyTalk
         public int TotalCompletionTokens { get; set; } = 0;
         public double BudgetLimitJpy { get; set; } = 500; // 0=無制限
         public bool AutoSaveLog { get; set; } = true;
-        public string SaveFolder { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-
         private static readonly string SettingsPath = Path.Combine(
             AppDomain.CurrentDomain.BaseDirectory, "settings.json");
 

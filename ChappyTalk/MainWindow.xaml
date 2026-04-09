@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:ChappyTalk"
         mc:Ignorable="d"
-        Title="ChappyTalk" Height="450" Width="800"
+        Title="ChappyTalk" Height="450" Width="850"
         Icon="app.ico"
         Closing="Window_Closing">
     <Grid>
@@ -18,23 +18,37 @@
         <!-- トップパネル -->
         <Border Grid.Row="0" Background="LightGray" Padding="5">
             <StackPanel Orientation="Horizontal">
+                <Button x:Name="MuteButton" 
+                        Content="🎤 マイクON" 
+                        Width="80" 
+                        Height="30"
+                        Click="MuteButton_Click"
+                        Background="LightGreen"/>
                 <Button x:Name="LogLoadButton" 
                         Content="📂 ログ読込" 
-                        Width="100" 
+                        Width="80" 
                         Height="30"
                         Click="LogLoadButton_Click"
                         Margin="10,0,0,0"
                         Background="#D0E8FF"/>
                 <Button x:Name="LogPlayButton" 
                         Content="▶️ ログ再生" 
-                        Width="100" 
+                        Width="80" 
                         Height="30"
                         Click="LogPlayButton_Click"
                         Margin="10,0,0,0"
                         Background="#D0FFD0"/>
+                <Button x:Name="LogPauseButton" 
+                        Content="⏸ 一時" 
+                        Width="80" 
+                        Height="30"
+                        Click="LogPauseButton_Click"
+                        Margin="5,0,0,0"
+                        Background="#FFDD22"
+                        IsEnabled="False"/>
                 <Button x:Name="LogStopButton" 
                         Content="⏹ 停止" 
-                        Width="70" 
+                        Width="80" 
                         Height="30"
                         Click="LogStopButton_Click"
                         Margin="5,0,0,0"
@@ -42,31 +56,18 @@
                         IsEnabled="False"/>
                 <Button x:Name="LogSaveButton" 
                         Content="📝 ログ保存" 
-                        Width="100" 
+                        Width="80" 
                         Height="30"
                         Click="LogSaveButton_Click"
                         Margin="10,0,0,0"
                         Background="#E8D0FF"/>
                 <Button x:Name="SaveButton" 
-                        Content="💾 選択部分を保存" 
-                        Width="140" 
+                        Content="💾 選択部分をWAV" 
+                        Width="120" 
                         Height="30"
                         Click="SaveButton_Click"
                         Margin="10,0,0,0"
                         Background="LightBlue"/>
-                <Button x:Name="MuteButton" 
-                        Content="🎤 マイクON" 
-                        Width="120" 
-                        Height="30"
-                        Click="MuteButton_Click"
-                        Background="LightGreen"/>
-                <Button x:Name="FolderButton" 
-                        Content="📁 保存フォルダー設定" 
-                        Width="150" 
-                        Height="30"
-                        Click="FolderButton_Click"
-                        Margin="10,0,0,0"
-                        Background="LightYellow"/>
                 <Button x:Name="SettingsButton" 
                         Content="⚙️ 設定" 
                         Width="80" 

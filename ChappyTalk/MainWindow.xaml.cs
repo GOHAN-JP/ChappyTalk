@@ -41,15 +41,18 @@ namespace ChappyTalk
     {
         // ===== 音声関連 =====
         WaveInEvent waveIn;
-        WaveFileWriter writer;
-        private WaveOutEvent outputDevice;
-        private AudioFileReader audioFile;
-        private TaskCompletionSource<bool> recordingStoppedTcs;
+        WaveFileWriter writer = null;
+    //    WaveOutEvent outputDevice;
+    //    AudioFileReader audioFile;
+        TaskCompletionSource<bool> recordingStoppedTcs;
 
         // ===== 状態管理 =====
-        bool isRecording = false;
-        bool isSpeaking = false; // ← エコー防止
-        bool isMuted = false; // マイクミュート状態
+        volatile bool isRecording = false;
+        volatile bool isSpeaking = false;    // ← エコー防止
+        bool isMuted = false;       // マイクミュート状態
+        bool isPaused = false;      // ログ再生の一時停止状態
+        bool isResuming = false;    // ★再開フラグ
+        bool isProcessing = false;  // 録音処理中フラグ（重複防止）
 
         float silenceThreshold = 0.02f;
         int silenceCount = 0;
@@ -102,7 +105,7 @@ namespace ChappyTalk
         // 会話履歴
         private List<object> conversationHistory = new List<object>();
 
-        private string baseQueryJson = null;
+        private string baseQueryJson;
 
         public MainWindow()
         {
@@ -110,7 +113,7 @@ namespace ChappyTalk
             LoadSettings();
             LoadSpeakers();
             _ = InitializeQuery();
-            StartAutoRecording();
+            InitializeAudio();
         }
 
         private void LoadSettings()
@@ -123,6 +126,7 @@ namespace ChappyTalk
         {
             OPENAI_API_KEY = s.OpenAiApiKey;
             AIVIS_URL = s.AivisUrl;
+
             silenceThreshold = s.SilenceThreshold;
             speedScale = s.SpeedScale;
             pitchScale = s.PitchScale;
@@ -156,10 +160,7 @@ namespace ChappyTalk
             }
             catch (Exception ex)
             {
-                Dispatcher.Invoke(() =>
-                {
-                    OutputText.Text += $"⚠️ 初期化失敗: {ex.Message}\n";
-                });
+                OutputTextMessage($"⚠️ 初期化失敗: {ex.Message}\n");
             }
         }
 
@@ -211,11 +212,11 @@ namespace ChappyTalk
                 {
                     UserVoiceComboBox.SelectedItem = currentUserSpeaker;
                 }
-                OutputText.Text = $"✅ {speakers.Count}個のキャラクターを読み込みました\n\n";
+                OutputTextMessage($"✅ {speakers.Count}個のキャラクターを読み込みました");
             }
             catch (Exception ex)
             {
-                OutputText.Text = $"⚠️ AivisSpeechを起動して下さい: {ex.Message}\n";
+                OutputTextMessage($"⚠️ AivisSpeechを起動して下さい: {ex.Message}");
             }
         }
 
@@ -229,8 +230,7 @@ namespace ChappyTalk
                 SPEAKER = selectedSpeaker.Id;
                 appSettings.SpeakerId = SPEAKER;
                 appSettings.Save();
-                OutputText.Text += $"🎭 {selectedSpeaker.Name} に変更しました\n";
-                OutputText.ScrollToEnd();
+                OutputTextMessage($"🎭 {selectedSpeaker.Name} に変更しました");
             }
         }
         // ==================================
@@ -243,8 +243,7 @@ namespace ChappyTalk
                 USER_SPEAKER = selectedSpeaker.Id;
                 appSettings.UserSpeakerId = USER_SPEAKER;
                 appSettings.Save();
-                OutputText.Text += $"🎭 {selectedSpeaker.Name} に変更しました\n";
-                OutputText.ScrollToEnd();
+                OutputTextMessage($"🎭 {selectedSpeaker.Name} に変更しました");
             }
         }
 
@@ -260,36 +259,14 @@ namespace ChappyTalk
                 // ミュートON
                 MuteButton.Content = "🔇 マイクOFF";
                 MuteButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.LightCoral);
-                OutputText.Text += "🔇 マイクをミュートしました\n";
+                OutputTextMessage("🔇 マイクをミュートしました");
             }
             else
             {
                 // ミュートOFF
                 MuteButton.Content = "🎤 マイクON";
                 MuteButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.LightGreen);
-                OutputText.Text += "🎤 マイクをオンにしました\n";
-            }
-            OutputText.ScrollToEnd();
-        }
-
-        // =========================
-        // 📁 保存フォルダー設定
-        // =========================
-        private void FolderButton_Click(object sender, RoutedEventArgs e)
-        {
-            var dialog = new Microsoft.Win32.OpenFolderDialog
-            {
-                Title = "音声ファイルの保存先フォルダーを選択",
-                InitialDirectory = saveFolder
-            };
-
-            if (dialog.ShowDialog() == true)
-            {
-                saveFolder = dialog.FolderName;
-                appSettings.SaveFolder = saveFolder;
-                appSettings.Save();
-                OutputText.Text += $"📁 保存先を設定: {saveFolder}\n";
-                OutputText.ScrollToEnd();
+                OutputTextMessage("🎤 マイクをオンにしました");
             }
         }
 
@@ -306,14 +283,14 @@ namespace ChappyTalk
             if (settingsWindow.ShowDialog() == true)
             {
                 appSettings = settingsWindow.Result;
-                appSettings.SaveFolder = saveFolder; // フォルダーは別管理なので維持
                 appSettings.SpeakerId = SPEAKER; // キャラクターは別管理なので維持
+                appSettings.UserSpeakerId = USER_SPEAKER; // 自分のキャラクターも維持
                 appSettings.TotalPromptTokens = totalPromptTokens; // 累積トークンを維持
                 appSettings.TotalCompletionTokens = totalCompletionTokens;
+                saveFolder = appSettings.SaveFolder;
                 appSettings.Save();
                 ApplySettings(appSettings);
-                OutputText.Text += "⚙️ 設定を保存しました\n";
-                OutputText.ScrollToEnd();
+                OutputTextMessage("⚙️ 設定を保存しました");
             }
         }
 
@@ -332,7 +309,7 @@ namespace ChappyTalk
             if (dialog.ShowDialog() == true)
             {
                 string content = System.IO.File.ReadAllText(dialog.FileName);
-                OutputText.Text = content;
+                OutputTextMessage(content);
             }
         }
         
@@ -356,6 +333,26 @@ namespace ChappyTalk
                 isSpeaking = false;
                 return;
             }
+            // 1. 改行コードを \n に統一し、TextBoxの中身を書き換えて「1文字」扱いに固定する
+            // これにより、WPF内部のインデックス計算のズレを根絶します
+            string normalizedText = OutputText.Text.Replace("\r\n", "\n").Replace("\r", "\n");
+            OutputText.Text = normalizedText;
+            OutputText.CaretIndex = OutputText.Text.Length;
+
+            // 2. 統一したテキストで行分割（空行もインデックス維持のため含める）
+            lines = normalizedText.Split('\n');
+            if (lines.Length == 0)
+            { isSpeaking = false;
+               return;
+            }
+            var lineStartIndices = new int[lines.Length];
+            int currentPos = 0;
+            for (int i = 0; i < lines.Length; i++)
+            {
+                lineStartIndices[i] = currentPos;
+                currentPos += lines[i].Length + 1; // +1 は \n の分
+            }
+            
             // AIの声 → 現在選択中のキャラクター
             var aiSpeaker = SpeakerListBox.SelectedItem as SpeakerInfo;
             // 自分の声 → UserVoiceComboBoxで選んだキャラクター
@@ -378,40 +375,65 @@ namespace ChappyTalk
 
             _logPlaybackCts = new CancellationTokenSource();
             LogPlayButton.IsEnabled = false;
+            LogPauseButton.IsEnabled = true;
             LogStopButton.IsEnabled = true;
-
             try
             {
-                foreach (var line in lines)
+                OutputText.Focus();
+                for (int i = 0; i < lines.Length; i++)
                 {
                     if (_logPlaybackCts.Token.IsCancellationRequested) break;
-
-                    var trimmed = line.Trim();
-                    if (string.IsNullOrEmpty(trimmed)) continue;
-
-                    string text;
-                    int speakerId;
-
-                    if (trimmed.Contains("🧑"))
+                    // 再開時：カーソル位置から「行番号」を逆引きしてジャンプ
+                    if (isResuming)
                     {
-                        int idx = trimmed.IndexOf("🧑");
-                        text = trimmed[(idx + "🧑".Length)..].Trim();
-                        speakerId = userSpeaker.Id;
+                        int caret = OutputText.CaretIndex;
+                        // 現在のカーソル位置より後ろにある「一番近い行開始位置」を探す
+                        for (int j = 0; j < lineStartIndices.Length; j++)
+                        {
+                            if (lineStartIndices[j] <= caret) i = j;
+                            else break;
+                        }
+                        isResuming = false;
                     }
-                    else if (trimmed.Contains("🤖"))
-                    {
-                        int idx = trimmed.IndexOf("🤖");
-                        text = trimmed[(idx + "🤖".Length)..].Trim();
-                        speakerId = aiSpeaker.Id;
-                    }
-                    else
-                    {
-                        continue;
-                    }
+                    // 3. ハイライト処理 (WPFの行機能を使わず、文字の開始位置と長さで指定)
+                    int startIdx = lineStartIndices[i];
+                    int length = lines[i].Length;
 
-                    if (string.IsNullOrEmpty(text)) continue;
+                    if (startIdx < OutputText.Text.Length)
+                    {
+                        OutputText.Select(startIdx, length);
+              
+                        // スクロールだけは「見た目の行」に合わせる必要がある
+                        int visualLine = OutputText.GetLineIndexFromCharacterIndex(startIdx);
+                        OutputText.ScrollToLine(visualLine);
+                    }
+                    var line = lines[i].Trim();
+                    if (!string.IsNullOrEmpty(line))
+                    {
+                        string text = "";
+                        int speakerId = -1;
 
-                    await SpeakWithIdAsync(text, speakerId, _logPlaybackCts.Token);
+                        if (line.Contains("🧑"))
+                        {
+                            text = line[(line.IndexOf("🧑") + "🧑".Length)..].Trim();
+                            speakerId = userSpeaker.Id;
+                        }
+                        else if (line.Contains("🤖"))
+                        {
+                            text = line[(line.IndexOf("🤖") + "🤖".Length)..].Trim();
+                            speakerId = aiSpeaker.Id;
+                        }
+
+                        if (!string.IsNullOrEmpty(text) && speakerId != -1)
+                        {
+                            // 音声再生 (await で完了を待つ)
+                            await SpeakWithIdAsync(text, speakerId, _logPlaybackCts.Token);
+                        }
+                    }
+                    // ★一時停止の待機
+                    // pauseSemaphore は SemaphoreSlim(1, 1) で定義されている前提です
+                    await pauseSemaphore.WaitAsync(_logPlaybackCts.Token);
+                    pauseSemaphore.Release();
                 }
             }
             catch (OperationCanceledException) { }
@@ -422,20 +444,53 @@ namespace ChappyTalk
             }
             finally
             {
+                OutputTextMessage(""); // カーソルを一番最後へ
                 LogPlayButton.IsEnabled = true;
+                LogPauseButton.IsEnabled = false;
                 LogStopButton.IsEnabled = false;
+                // もし一時停止状態なら、セマフォを解放しておく
+                if (pauseSemaphore.CurrentCount == 0) 
+                {
+                    // 再生終了時の状態リセット
+                    pauseSemaphore.Release();
+                }
                 _logPlaybackCts?.Dispose();
                 _logPlaybackCts = null;
+                LogPauseButton.Content = "一時";
                 isSpeaking = false;
+                isPaused = false;
             }
         }
 
+        // =============
+        // ⏸ 一時停止
+        // =============
+        private SemaphoreSlim pauseSemaphore = new SemaphoreSlim(1, 1);
+        private async void LogPauseButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!isPaused)
+            {
+                // 【一時停止】セマフォを奪い取って、再生側を待たせる
+                await pauseSemaphore.WaitAsync();
+                isPaused = true;
+                LogPauseButton.Content = "再開"; // ボタン表示変更など
+            }
+            else
+            {
+                // 【再開】セマフォを解放して、再生側を通す
+                pauseSemaphore.Release();
+                isPaused = false;
+                isResuming = true;
+                LogPauseButton.Content = "一時";
+            }
+        }
         // ==========
         // ⏹ 停止
         // ==========
         private void LogStopButton_Click(object sender, RoutedEventArgs e)
         {
             _logPlaybackCts?.Cancel();
+            OutputTextMessage("");
         }
 
         // ==============================
@@ -460,8 +515,7 @@ namespace ChappyTalk
                 {
                     if (showMessage)
                     {
-                        OutputText.Text += "⚠️ 保存するログがありません\n";
-                        OutputText.ScrollToEnd();
+                        OutputTextMessage("⚠️ 保存するログがありません");
                     }
                     return;
                 }
@@ -486,23 +540,22 @@ namespace ChappyTalk
 
                 if (showMessage)
                 {
-                    OutputText.Text += $"📝 ログを保存しました: {Path.GetFileName(filePath)}\n";
-                    OutputText.ScrollToEnd();
+                    OutputTextMessage($"📝 ログを保存しました: {Path.GetFileName(filePath)}");
                 }
             }
             catch
             {
                 if (showMessage)
                 {
-                    OutputText.Text += "❌ ログ保存失敗\n";
-                    OutputText.ScrollToEnd();
+                    OutputTextMessage("❌ ログ保存失敗");
                 }
             }
         }
 
-        // =========================
-        // 💾 選択部分を音声保存
-        // =========================
+        // ====================================================
+        // 選択部分を音声保存
+        // OutputText内の選択テキストを音声化して保存する機能
+        // ====================================================
         private async void SaveButton_Click(object sender, RoutedEventArgs e)
         {
             // 選択テキストを取得
@@ -554,8 +607,7 @@ namespace ChappyTalk
 
             try
             {
-                OutputText.Text += $"💾 音声生成中...\n";
-                OutputText.ScrollToEnd();
+                OutputTextMessage("💾 音声生成中...");
 
                 // 音声生成（cleanTextを使用）
                 byte[] audioBytes = await CreateAudio(cleanText);
@@ -574,157 +626,179 @@ namespace ChappyTalk
                     reader.CopyTo(writer);
                 }
 
-                OutputText.Text += $"✅ 保存しました: {Path.GetFileName(filePath)}\n";
-                OutputText.ScrollToEnd();
+                OutputTextMessage($"✅ 保存しました: {Path.GetFileName(filePath)}");
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"保存エラー: {ex.Message}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
-                OutputText.Text += $"❌ 保存失敗: {ex.Message}\n";
-                OutputText.ScrollToEnd();
+                OutputTextMessage($"❌ 保存失敗: {ex.Message}");
             }
         }
 
-        // =========================
-        // 🎤 自動録音
-        // =========================
-        private void StartAutoRecording()
+        // ==================================================
+        // 自分の声を録音する関連の初期化とイベントハンドラ
+        // ===================================================
+        private void InitializeAudio()
         {
+            if (waveIn != null) return; // 既に作成済みなら何もしない
+
             waveIn = new WaveInEvent();
+            // 録音フォーマットを設定（例：16kHz、モノラル）
             waveIn.WaveFormat = new WaveFormat(16000, 1);
-            waveIn.BufferMilliseconds = 50; // 50msごとに検出（デフォルト100ms→倍速で反応）
+            // 録音データがバッファに溜まる頻度を設定（例：50msごと）
+            waveIn.BufferMilliseconds = 50;
 
-            int speechLength = 0;
-            DateTime recordStartTime = DateTime.MinValue;
+            waveIn.DataAvailable += OnDataAvailable; 
+            waveIn.RecordingStopped += OnRecordingStopped;
 
-            waveIn.DataAvailable += async (s, a) =>
-            {
-                if (isSpeaking || isMuted) return;
-
-                float volume = 0;
-
-                for (int i = 0; i < a.BytesRecorded; i += 2)
-                {
-                    short sample = (short)(a.Buffer[i] | (a.Buffer[i + 1] << 8));
-                    volume = Math.Max(volume, Math.Abs(sample / 32768f));
-                }
-
-                // =========================
-                // 🔊 音あり
-                // =========================
-                if (volume > silenceThreshold)
-                {
-                    silenceCount = 0;
-                    speechLength++;
-
-                    if (!isRecording)
-                    {
-                        isRecording = true;
-                        speechLength = 0;
-
-                        writer = new WaveFileWriter("mic.wav", waveIn.WaveFormat);
-                        recordingStoppedTcs = new TaskCompletionSource<bool>();
-
-                        recordStartTime = DateTime.Now;
-
-                        Dispatcher.Invoke(() =>
-                        {
-                            OutputText.Text += "🎤 録音中...\n";
-                            OutputText.ScrollToEnd();
-                        });
-                    }
-
-                    writer?.Write(a.Buffer, 0, a.BytesRecorded);
-                }
-                // =========================
-                // 🔇 無音
-                // =========================
-                else
-                {
-                    if (isRecording)
-                    {
-                        // 余韻（語尾切れ防止）
-                        writer?.Write(a.Buffer, 0, a.BytesRecorded);
-
-                        silenceCount++;
-
-                        // 🔥 動的無音判定（50msバッファ基準）
-                        int dynamicSilenceLimit;
-
-                        if (speechLength < 30)
-                            dynamicSilenceLimit = 14; // 短い発話 → 700ms待つ
-                        else if (speechLength < 80)
-                            dynamicSilenceLimit = 10; // 中程度 → 500ms
-                        else
-                            dynamicSilenceLimit = 7;  // 長い発話 → 350ms で早く切る
-
-                        // 🔥 最低録音時間（誤爆防止）
-                        var recordingTime = (DateTime.Now - recordStartTime).TotalMilliseconds;
-
-                        if (silenceCount > dynamicSilenceLimit && recordingTime > 400)
-                        {
-                            isRecording = false;
-
-                            waveIn.StopRecording();
-
-                            await recordingStoppedTcs.Task;
-
-                            await Dispatcher.InvokeAsync(async () =>
-                            {
-                                await ProcessVoice();
-
-                                // 🔁 再スタート
-                                StartAutoRecording();
-                            });
-                        }
-                    }
-                }
-            };
-
-            waveIn.RecordingStopped += (s, a) =>
-            {
-                writer?.Flush();
-                writer?.Dispose();
-                writer = null;
-
-                waveIn?.Dispose();
-                waveIn = null;
-
-                recordingStoppedTcs?.SetResult(true);
-            };
-
-            waveIn.StartRecording();
+            waveIn.StartRecording(); // 録音はずっと「開始」したままにする
         }
-        // =========================
-        // 🎤 → 🤖 → 🔊
-        // =========================
+
+        //=================================================================================================
+        // 録音データが利用可能になったときのイベントハンドラ
+        // 音声の有無を判定して、録音の開始・継続・終了を管理する
+        // 録音の開始・終了のタイミングで重い処理を走らせるため、フラグ管理と非同期処理を組み合わせている
+        //=================================================================================================
+        private async void OnDataAvailable(object sender, WaveInEventArgs a)
+        {
+            if (isProcessing || isSpeaking || isMuted) return;
+
+            float volume = 0;
+            for (int i = 0; i < a.BytesRecorded; i += 2)
+            {
+                short sample = (short)(a.Buffer[i] | (a.Buffer[i + 1] << 8));
+                volume = Math.Max(volume, Math.Abs(sample / 32768f));
+            }
+
+            // --- A. 音あり：録音を開始または継続 ---
+            if (volume > silenceThreshold)
+            {
+                silenceCount = 0;
+
+                if (!isRecording)
+                {
+                    // 初めて音を検知した瞬間
+                    isRecording = true;
+                    writer = new WaveFileWriter("mic.wav", waveIn.WaveFormat);
+                    Dispatcher.Invoke(() =>
+                    {
+                        OutputTextMessage("🎤 録音中...");
+                    });
+                }
+                // ファイルに書き込む
+                writer?.Write(a.Buffer, 0, a.BytesRecorded);
+            }
+            // 無音
+            // --- B. 無音：録音中なら終了判定を行う ---
+            else if (isRecording)
+            {
+                writer?.Write(a.Buffer, 0, a.BytesRecorded); // 語尾切れ防止に無音も少し書く
+                silenceCount++;
+
+                // 一定時間（例：10回＝500ms）無音が続いたら終了
+                if (silenceCount > 10)
+                {
+                    isRecording = false; // 先にフラグを倒して二重動作を防ぐ
+
+                    // ファイルを閉じる
+                    writer?.Flush();
+                    writer?.Dispose();
+                    writer = null;
+
+                    // ここで音声認識などの重い処理を「待たずに」走らせる
+                    //（UIスレッドを止めないよう Dispatcher.InvokeAsync 等を活用）
+                    Dispatcher.Invoke(() =>
+                    {
+                        _ = ProcessVoiceAndResume();
+                    });
+                }
+            }
+        }
+        // ==============================================================
+        // 録音が停止したときのイベントハンドラ
+        // 録音の終了を確定させるための後処理やエラーハンドリングを行う
+        // ==============================================================
+        private async Task ProcessVoiceAndResume()
+        {
+            if (isProcessing) return; // 二重起動防止
+            isProcessing = true;
+
+            try
+            {
+                // 1. ファイルが確実に書き込まれるのを待つ（念のため）
+                if (writer != null)
+                {
+                    writer.Flush();
+                    writer.Dispose();
+                    writer = null;
+                }
+
+                // 2. 音声認識などの重い処理を実行（以前の ProcessVoice() を呼ぶ）
+                // ※ ここで await を使うことで、解析が終わるまで次へ進まない
+                await ProcessVoice();
+
+            }
+            catch (Exception ex)
+            {
+                // エラーハンドリング
+                OutputTextMessage($"❌ 解析失敗: {ex.Message}");
+            }
+            finally
+            {
+                // 3. 処理が終わったらフラグを戻す
+                // これで OnDataAvailable が再び音声を拾えるようになる
+                isProcessing = false;
+
+                // カウントをリセットして次の録音に備える
+                silenceCount = 0;
+                isRecording = false;
+            }
+        }
+
+        // ======================================
+        // 録音が停止したときのイベントハンドラ
+        // ======================================
+        private void OnRecordingStopped(object sender, StoppedEventArgs e)
+        {
+            // ライターが残っていたら後片付け
+            writer?.Dispose();
+
+            if (e.Exception != null)
+            {
+                // エラーで止まった場合
+                OutputTextMessage($"⚠️ 録音デバイスが停止しました: {e.Exception.Message}");
+            }
+        }
+
+        // ==========================================================================
+        // 音声認識 → ChatGPT → 音声合成
+        // 処理の流れをまとめた関数
+        // 重い処理を待たずに走らせるため、ProcessVoiceAndResume() から呼び出される
+        // ==========================================================================
         private async Task ProcessVoice()
         {
+            if(isSpeaking) return;
             string text = await SpeechToText();
-
+            string target = "🎤 録音中...\n";
             if (string.IsNullOrWhiteSpace(text))
             {
                 // 録音したが無音だった場合、「🎤 録音中...」を削除
-                if (OutputText.Text.EndsWith("🎤 録音中...\n"))
+                if (OutputText.Text.EndsWith(target))
                 {
-                    OutputText.Text = OutputText.Text.Substring(0, OutputText.Text.Length - 9);
+                    OutputText.Text = OutputText.Text.Substring(0, OutputText.Text.Length - target.Length);
                 }
                 return;
             }
-
             // 「🎤 録音中...」を実際の発言に置き換え
-            if (OutputText.Text.EndsWith("🎤 録音中...\n"))
+            if (OutputText.Text.EndsWith(target))
             {
-                OutputText.Text = OutputText.Text.Substring(0, OutputText.Text.Length - 9);
+                OutputText.Text = OutputText.Text.Substring(0, OutputText.Text.Length - target.Length);
             }
-
-            OutputText.Text += "🧑 " + text + "\n";
-            OutputText.ScrollToEnd(); // 自動スクロール
+            OutputTextMessage("🧑 " + text);
 
             string reply = await AskGPT(text);
-            OutputText.Text += "🤖 " + reply + "\n\n";
-            OutputText.ScrollToEnd(); // 自動スクロール
 
+            OutputTextMessage("🤖 " + reply);
             var (first, rest) = SplitFirstSentence(reply);
             // まず最初だけ喋る（即）
             await Speak(first);
@@ -736,6 +810,11 @@ namespace ChappyTalk
             }
         }
 
+        // ===============================================================
+        // テキストの置き換えをする
+        // （例：絵文字やマーカーを除去してAIの純粋な発言だけを取り出す）
+        // ===============================================================
+
         private (string first, string rest) SplitFirstSentence(string text)
         {
             var match = System.Text.RegularExpressions.Regex.Match(text, @"^.*?[。！？]");
@@ -746,13 +825,13 @@ namespace ChappyTalk
                 var rest = text.Substring(first.Length);
                 return (first, rest);
             }
-
             return (text, "");
         }
 
-        // =========================
-        // 🤖 ChatGPT
-        // =========================
+        // ======================================================
+        // ChatGPTに質問して返答をもらう関数
+        // 会話履歴の管理やトークン使用量のカウントもここで行う
+        // ======================================================
         private async Task<string> AskGPT(string input)
         {
             http.DefaultRequestHeaders.Authorization =
@@ -819,18 +898,18 @@ namespace ChappyTalk
                 appSettings.TotalCompletionTokens = totalCompletionTokens;
                 appSettings.Save();
 
-                UpdateTokenDisplay();
+                Dispatcher.Invoke(() => {
+                    UpdateTokenDisplay();
+                });
             }
-
             // AIの返答を履歴に追加
             conversationHistory.Add(new { role = "assistant", content = reply });
-
             return reply;
         }
 
-        // =========================
-        // 🎤 音声認識
-        // =========================
+        // ===================================================================
+        // 録音した音声ファイルをOpenAIのAPIに送ってテキストに変換してもらう
+        // ===================================================================
         private async Task<string> SpeechToText()
         {
             http.DefaultRequestHeaders.Authorization =
@@ -894,8 +973,7 @@ namespace ChappyTalk
                 if (remaining < 0 && !budgetWarningShown)
                 {
                     budgetWarningShown = true;
-                    OutputText.Text += $"⚠️ 予算上限（{budgetLimitJpy:F0}円）を超えました！設定で予算を見直すかトークンをクリアしてください\n";
-                    OutputText.ScrollToEnd();
+                    OutputTextMessage($"⚠️ 予算上限（{budgetLimitJpy:F0}円）を超えました！設定で予算を見直すかトークンをクリアしてください");
                 }
             }
             else
@@ -904,14 +982,13 @@ namespace ChappyTalk
                 TotalTokenStatus.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x55, 0x55, 0x55));
             }
         }
-        /*=========================
-         💣 トークンリセット
-         =========================
-         予算管理のため、累計トークン数をリセットする機能を追加
-         設定画面からもリセット可能に（予算管理のリスタート用）
-         リセットするとセッションと累計の両方が0になる
-         リセット前に確認ダイアログを表示して誤操作を防止
-         */
+        // ========================================================
+        // 💣 トークンリセット
+        // 予算管理のため、累計トークン数をリセットする機能を追加
+        // 設定画面からもリセット可能に（予算管理のリスタート用）
+        // リセットするとセッションと累計の両方が0になる
+        // リセット前に確認ダイアログを表示して誤操作を防止
+        // ========================================================
         private void ClearTokens_Click(object sender, RoutedEventArgs e)
         {
             var result = MessageBox.Show("累計トークン数をリセットしますか？", "確認", MessageBoxButton.YesNo, MessageBoxImage.Question);
@@ -931,9 +1008,10 @@ namespace ChappyTalk
         }
 
 
-        // =========================
+        // ================================================================================
         // 🔊 音声合成（AIVIS）
-        // =========================
+        // 時間がかかる処理なので、最初の文だけ先に喋って、残りは生成と再生を並行して行う
+        // ================================================================================
         private async Task Speak(string text)
         {
             isSpeaking = true;
@@ -941,7 +1019,7 @@ namespace ChappyTalk
             try
             {
                 // 50文字を目安に分割（句読点優先で自然な区切りに）
-                var lines = SplitText(text, 80);
+                var lines = SplitText(text, 50);
 
                 // 🚀 並列処理: 再生と音声生成を並行実行
                 var audioGenerationTasks = new Queue<Task<byte[]>>();
@@ -979,21 +1057,14 @@ namespace ChappyTalk
                     catch (HttpRequestException ex)
                     {
                         // API接続エラーをログに表示
-                        Dispatcher.Invoke(() =>
-                        {
-                            OutputText.Text += $"\n⚠️ 音声生成エラー: {ex.Message}";
-                        });
-                        // エラーが出ても残りのタスクをクリア
+                        OutputTextMessage($"\n⚠️ 音声生成エラー: {ex.Message}");
                         break;
                     }
                 }
             }
             catch (Exception ex)
             {
-                Dispatcher.Invoke(() =>
-                {
-                    OutputText.Text += $"\n❌ エラー: {ex.Message}";
-                });
+                OutputTextMessage($"\n❌ エラー: {ex.Message}");
             }
             finally
             {
@@ -1003,6 +1074,11 @@ namespace ChappyTalk
             }
         }
 
+        //=======================================================================================
+        // テキストを自然な区切りで分割する関数
+        // 句読点や文末で分割し、長すぎる場合はさらに「、」や空白で分割して自然な区切りを目指す
+        // これにより、音声生成の負荷を分散しつつ、聞きやすい音声出力を実現する
+        //=======================================================================================
         private List<string> SplitText(string text, int maxLength)
         {
             var result = new List<string>();
@@ -1093,12 +1169,17 @@ namespace ChappyTalk
             return result;
         }
 
-        // 音声生成を非同期で実行（キャッシュも検討可能）
+        // 音声生成を非同期で実行
         private async Task<byte[]> CreateAudioAsync(string text)
         {
             return await CreateAudio(text);
         }
-
+        // ======================================================================================
+        // AIVISのAPIを呼び出して音声データを取得する関数
+        // テキストをクリーンアップしてからAPIに送る
+        // 音声生成のパラメータはここで上書きしている（speedScale, pitchScale, intonationScale）
+        // 生成された音声データはbyte[]で返す
+        // ======================================================================================
         private async Task<byte[]> CreateAudio(string text)
         {
             try
@@ -1160,54 +1241,52 @@ namespace ChappyTalk
                 throw new Exception($"音声生成エラー: {ex.Message}", ex);
             }
         }
-
-
+        // ================================================================================================================================================
+        // NAudioを使ってメモリ上の音声データを再生する関数
+        // 生成された音声データをbyte[]で受け取り、WaveFileReaderで読み込んでWaveOutEventで再生する
+        // 再生が完了するまで待機するためにTaskCompletionSourceを使用している
+        // Bluetoothスピーカーの遅延や残響を考慮して、再生完了後に少し待機する（echoGuardDelay）
+        // ここでのポイントは、WaveOutEventの作成をUIスレッドで行うこと（Dispatcher.Invokeを使用）で、これによりスレッドエラーを防止している
+        // 以前の実装では、WaveOutEventを非UIスレッドで作成していたため、Bluetoothスピーカー使用時に再生ができない問題があったが、この修正で解決している
+        // さらに、再生完了イベントでのリソースのDisposeも安全に行うようにしている
+        // 例外が発生した場合は呼び出し元でキャッチしてログに表示することを想定している
+        //=================================================================================================================================================
         private async Task PlaySoundFromMemory(byte[] audioBytes)
         {
             var tcs = new TaskCompletionSource<bool>();
 
-            // メモリストリームとリーダーを再生完了まで保持
+            // メモリストリームとリーダーの準備
             var ms = new MemoryStream(audioBytes);
             var reader = new WaveFileReader(ms);
-            var output = new WaveOutEvent();
 
-            // レイテンシを最小化（200msに短縮して高速応答）
+            // WaveOutEventの作成をDispatcher.Invokeで行う
+            WaveOutEvent output = null;
+            Dispatcher.Invoke(() =>
+            {
+                output = new WaveOutEvent();
+            });
+
             output.DesiredLatency = 200;
 
             output.PlaybackStopped += (s, e) =>
             {
+                // ここでのDisposeも安全に行う
                 output?.Dispose();
                 reader?.Dispose();
                 ms?.Dispose();
-                tcs.SetResult(true);
+                tcs.TrySetResult(true);
             };
 
             output.Init(reader);
             output.Play();
 
-            // 再生完了まで待つ
             await tcs.Task;
         }
-        private byte[] AddSilence(byte[] wavData, int milliseconds = 1050)
-        {
-            using var ms = new MemoryStream(wavData);
-            using var reader = new WaveFileReader(ms);
-
-            var silenceBytes = new byte[reader.WaveFormat.AverageBytesPerSecond * milliseconds / 1000];
-
-            using var outStream = new MemoryStream();
-            using (var writer = new WaveFileWriter(outStream, reader.WaveFormat))
-            {
-                // 前に無音追加
-                writer.Write(silenceBytes, 0, silenceBytes.Length);
-                // 元音声コピー
-                reader.CopyTo(writer);
-                // 後ろにも無音追加
-                writer.Write(silenceBytes, 0, silenceBytes.Length);
-            }
-            return outStream.ToArray();
-        }
-
+        //========================================================================================================================================
+        // Speak関数の内容をこちらに移動して、Speak関数は分割と並列処理の管理に専念させる
+        // これにより、Speak関数はテキストの分割と並列処理の管理に専念でき、SpeakWithIdAsyncは単純にテキストを音声化して再生することに集中できる
+        // これも非同期関数で、テキストと話者IDを受け取って音声を生成し、再生する
+        // =======================================================================================================================================
         private async Task SpeakWithIdAsync(string text, int speakerId, CancellationToken ct)
         {
             using var http = new HttpClient();
@@ -1243,6 +1322,19 @@ namespace ChappyTalk
                 tcs.TrySetCanceled();
             });
             await tcs.Task;
+        }
+
+        private void OutputTextMessage(string message)
+        {
+            System.Windows.Application.Current.Dispatcher.Invoke(() =>
+            {
+                OutputText.AppendText($"{message}\n");
+                if (!isSpeaking)
+                {
+                    OutputText.CaretIndex = OutputText.Text.Length;
+                    OutputText.ScrollToEnd();
+                }
+            }); 
         }
     }
 }

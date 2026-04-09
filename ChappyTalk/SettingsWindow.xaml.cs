@@ -15,6 +15,7 @@ namespace ChappyTalk
             SystemPromptBox.Text = settings.SystemPrompt;
             ApiKeyBox.Password = settings.OpenAiApiKey;
             AivisUrlBox.Text = settings.AivisUrl;
+            SaveFolderBox.Text = settings.SaveFolder;
             SpeedSlider.Value = settings.SpeedScale;
             PitchSlider.Value = settings.PitchScale;
             IntonationSlider.Value = settings.IntonationScale;
@@ -76,6 +77,7 @@ namespace ChappyTalk
                 SystemPrompt = SystemPromptBox.Text,
                 OpenAiApiKey = ApiKeyBox.Password,
                 AivisUrl = AivisUrlBox.Text,
+                SaveFolder = SaveFolderBox.Text,
                 SpeedScale = SpeedSlider.Value,
                 PitchScale = PitchSlider.Value,
                 IntonationScale = IntonationSlider.Value,
@@ -89,6 +91,23 @@ namespace ChappyTalk
             };
 
             DialogResult = true;
+        }
+
+        // =========================
+        // 📁 保存フォルダー設定
+        // =========================
+        private void FolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = "音声ファイルの保存先フォルダーを選択",
+                InitialDirectory = SaveFolderBox.Text
+            };
+
+            if (dialog.ShowDialog() == true)
+            {
+                SaveFolderBox.Text = dialog.FolderName;
+            }
         }
 
         private void Cancel_Click(object sender, RoutedEventArgs e)
