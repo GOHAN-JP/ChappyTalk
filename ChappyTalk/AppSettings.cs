@@ -9,6 +9,10 @@ namespace ChappyTalk
         public string OpenAiApiKey { get; set; } = "";
         public string AivisUrl { get; set; } = "http://127.0.0.1:10101";
         public string SaveFolder { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        public bool UseOpening { get; set; } = false;
+        public string OpeningText { get; set; } = "チャッピーいる";
+        public bool UseEnding { get; set; } = false;
+        public string EndingText { get; set; } = "チャッピーまた呼ぶね";
         public double SpeedScale { get; set; } = 1.1;
         public double PitchScale { get; set; } = 0.0;
         public double IntonationScale { get; set; } = 1.2;

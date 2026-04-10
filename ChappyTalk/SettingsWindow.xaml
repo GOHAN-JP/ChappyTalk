@@ -37,21 +37,37 @@
                 <TextBlock Text="📁 保存フォルダー設定" FontWeight="Bold" Margin="0,0,0,5"/>
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="71*" />
+                        <ColumnDefinition Width="326*"/>
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBox x:Name="SaveFolderBox"
                              Grid.Column="0"
-                             Margin="5"
-                             VerticalAlignment="Center"/>
+                             Margin="5,0,5,0"
+                             VerticalAlignment="Center" Grid.ColumnSpan="2"/>
                     <Button x:Name="FolderButton"
                             Click="FolderButton_Click"
-                            Grid.Column="1"
+                            Grid.Column="2"
                             Content="参照"
-                            Margin="5"
+                            Margin="5,5,5,5"
                             Padding="10,2"/>
                 </Grid>
-
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <CheckBox x:Name="CheckOpeningWords" Grid.Column="0" Content="開始の言葉" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <TextBox x:Name="TextBoxOpening"  Grid.Column="1" VerticalAlignment="Center"/>
+                </Grid>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <CheckBox x:Name="CheckEndingWords" Grid.Column="0" Content="終了の言葉" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <TextBox x:Name="TextBoxEnding"  Grid.Column="1" VerticalAlignment="Center"/>
+                </Grid>
 
                 <!-- 音声速度 -->
                 <TextBlock FontWeight="Bold" Margin="0,5,0,5">
@@ -157,9 +173,9 @@
 
         <!-- ボタン -->
         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
-            <Button Content="キャンセル" Width="90" Height="30" Click="Cancel_Click" Margin="0,0,10,0"/>
             <Button Content="💾 保存" Width="90" Height="30" Click="Save_Click" 
                     Background="LightGreen" FontWeight="Bold"/>
+            <Button Content="キャンセル" Width="90" Height="30" Click="Cancel_Click" Margin="0,0,10,0"/>
         </StackPanel>
     </Grid>
 </Window>

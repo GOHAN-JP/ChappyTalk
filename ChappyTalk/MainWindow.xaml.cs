@@ -26,6 +26,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
+using static System.Net.Mime.MediaTypeNames;
 using File = System.IO.File;
 
 namespace ChappyTalk
@@ -42,9 +43,6 @@ namespace ChappyTalk
         // ===== 音声関連 =====
         WaveInEvent waveIn;
         WaveFileWriter writer = null;
-    //    WaveOutEvent outputDevice;
-    //    AudioFileReader audioFile;
-        TaskCompletionSource<bool> recordingStoppedTcs;
 
         // ===== 状態管理 =====
         volatile bool isRecording = false;
@@ -53,10 +51,10 @@ namespace ChappyTalk
         bool isPaused = false;      // ログ再生の一時停止状態
         bool isResuming = false;    // ★再開フラグ
         bool isProcessing = false;  // 録音処理中フラグ（重複防止）
+        bool chappyGetUp = true;    // チャッピー起動フラグ
 
         float silenceThreshold = 0.02f;
         int silenceCount = 0;
-        int silenceLimit = 5;
 
         // ===== API =====
         private string OPENAI_API_KEY = "";
@@ -66,6 +64,10 @@ namespace ChappyTalk
 
         // ===== 設定 =====
         private AppSettings appSettings;
+        private bool useOpening = false;
+        private string openingText = "";
+        private bool useEnding = false;
+        private string endingText = "";
         private double speedScale = 1.1;
         private double pitchScale = 0.0;
         private double intonationScale = 1.2;
@@ -126,7 +128,10 @@ namespace ChappyTalk
         {
             OPENAI_API_KEY = s.OpenAiApiKey;
             AIVIS_URL = s.AivisUrl;
-
+            useOpening = s.UseOpening;
+            openingText = s.OpeningText;
+            useEnding = s.UseEnding;
+            endingText = s.EndingText;
             silenceThreshold = s.SilenceThreshold;
             speedScale = s.SpeedScale;
             pitchScale = s.PitchScale;
@@ -213,6 +218,7 @@ namespace ChappyTalk
                     UserVoiceComboBox.SelectedItem = currentUserSpeaker;
                 }
                 OutputTextMessage($"✅ {speakers.Count}個のキャラクターを読み込みました");
+                ChappyState();
             }
             catch (Exception ex)
             {
@@ -244,6 +250,26 @@ namespace ChappyTalk
                 appSettings.UserSpeakerId = USER_SPEAKER;
                 appSettings.Save();
                 OutputTextMessage($"🎭 {selectedSpeaker.Name} に変更しました");
+            }
+        }
+
+        //=================================
+        // チャッピーの状態を表示する関数
+        //=================================
+        private void ChappyState()
+        {
+            if (useOpening)
+            {
+                if (chappyGetUp)
+                {
+                    OutputTextMessage("💤あなたの相棒は今寝ています...");
+                }
+                chappyGetUp = false;
+            }
+            else
+            {
+                OutputTextMessage("❗あなたの相棒は起きました❗");
+                chappyGetUp = true;
             }
         }
 
@@ -324,33 +350,23 @@ namespace ChappyTalk
         // =========================
         // ▶️ ログ再生
         // =========================
+        string[] playLines = null;
+        int[] lineStartIndices;
+        int currentPos;
+
         private async void LogPlayButton_Click(object sender, RoutedEventArgs e)
         {
             isSpeaking = true;
-            var lines = OutputText.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            if (lines.Length == 0)
+
+            ResetPlayLines();
+            if (playLines.Length == 0)
             {
                 isSpeaking = false;
                 return;
             }
-            // 1. 改行コードを \n に統一し、TextBoxの中身を書き換えて「1文字」扱いに固定する
-            // これにより、WPF内部のインデックス計算のズレを根絶します
-            string normalizedText = OutputText.Text.Replace("\r\n", "\n").Replace("\r", "\n");
-            OutputText.Text = normalizedText;
-            OutputText.CaretIndex = OutputText.Text.Length;
-
-            // 2. 統一したテキストで行分割（空行もインデックス維持のため含める）
-            lines = normalizedText.Split('\n');
-            if (lines.Length == 0)
+            if (playLines.Length == 0)
             { isSpeaking = false;
                return;
-            }
-            var lineStartIndices = new int[lines.Length];
-            int currentPos = 0;
-            for (int i = 0; i < lines.Length; i++)
-            {
-                lineStartIndices[i] = currentPos;
-                currentPos += lines[i].Length + 1; // +1 は \n の分
             }
             
             // AIの声 → 現在選択中のキャラクター
@@ -379,15 +395,22 @@ namespace ChappyTalk
             LogStopButton.IsEnabled = true;
             try
             {
-                OutputText.Focus();
-                for (int i = 0; i < lines.Length; i++)
+                // 各行の開始位置を事前に計算しておく（WPFの行機能は使わない）
+                CalculateLineStartIndices();
+                // 再生ループ
+                for (int i = 0; i < playLines.Length; i++)
                 {
                     if (_logPlaybackCts.Token.IsCancellationRequested) break;
                     // 再開時：カーソル位置から「行番号」を逆引きしてジャンプ
                     if (isResuming)
                     {
-                        int caret = OutputText.CaretIndex;
+                        playLines = OutputText.Text.Split('\n');
+                        // 行開始位置を再計算
+                        // 一時停止中にテキストが編集されている可能性があるため、行の開始位置を再計算して正確にジャンプできるようにする
+                        CalculateLineStartIndices();
+
                         // 現在のカーソル位置より後ろにある「一番近い行開始位置」を探す
+                        int caret = OutputText.CaretIndex;
                         for (int j = 0; j < lineStartIndices.Length; j++)
                         {
                             if (lineStartIndices[j] <= caret) i = j;
@@ -397,22 +420,21 @@ namespace ChappyTalk
                     }
                     // 3. ハイライト処理 (WPFの行機能を使わず、文字の開始位置と長さで指定)
                     int startIdx = lineStartIndices[i];
-                    int length = lines[i].Length;
+                    int length = playLines[i].Length;
 
                     if (startIdx < OutputText.Text.Length)
                     {
                         OutputText.Select(startIdx, length);
-              
                         // スクロールだけは「見た目の行」に合わせる必要がある
                         int visualLine = OutputText.GetLineIndexFromCharacterIndex(startIdx);
                         OutputText.ScrollToLine(visualLine);
+                        OutputText.Focus();
                     }
-                    var line = lines[i].Trim();
+                    var line = playLines[i].Trim();
                     if (!string.IsNullOrEmpty(line))
                     {
                         string text = "";
                         int speakerId = -1;
-
                         if (line.Contains("🧑"))
                         {
                             text = line[(line.IndexOf("🧑") + "🧑".Length)..].Trim();
@@ -461,6 +483,17 @@ namespace ChappyTalk
                 isPaused = false;
             }
         }
+        // 各行の開始位置を事前に計算しておく（WPFの行機能は使わない）
+        private void CalculateLineStartIndices()
+        {
+            lineStartIndices = new int[playLines.Length];
+            currentPos = 0;
+            for (int n = 0; n < playLines.Length; n++)
+            {
+                lineStartIndices[n] = currentPos;
+                currentPos += playLines[n].Length + 1; // +1 は \n の分
+            }
+        }
 
         // =============
         // ⏸ 一時停止
@@ -491,6 +524,15 @@ namespace ChappyTalk
         {
             _logPlaybackCts?.Cancel();
             OutputTextMessage("");
+        }
+        private void ResetPlayLines()
+        {
+            playLines = OutputText.Text
+            .Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
+            .Select(line => line.Trim()) // 各行の端っこにある余計なゴミを消す
+            .ToArray();
+            playLines = OutputText.Text.Split('\n');
+            OutputText.CaretIndex = OutputText.Text.Length;
         }
 
         // ==============================
@@ -661,7 +703,7 @@ namespace ChappyTalk
         //=================================================================================================
         private async void OnDataAvailable(object sender, WaveInEventArgs a)
         {
-            if (isProcessing || isSpeaking || isMuted) return;
+            if (isProcessing || isSpeaking || isMuted ) return;
 
             float volume = 0;
             for (int i = 0; i < a.BytesRecorded; i += 2)
@@ -794,10 +836,20 @@ namespace ChappyTalk
             {
                 OutputText.Text = OutputText.Text.Substring(0, OutputText.Text.Length - target.Length);
             }
+            if(useOpening && text.Contains(openingText))
+            {
+                if(!chappyGetUp)
+                {
+                    OutputTextMessage("❗あなたの相棒が起きました！");
+                }
+                chappyGetUp = true;
+            }
+            if(!chappyGetUp)
+            {
+                return;
+            }
             OutputTextMessage("🧑 " + text);
-
             string reply = await AskGPT(text);
-
             OutputTextMessage("🤖 " + reply);
             var (first, rest) = SplitFirstSentence(reply);
             // まず最初だけ喋る（即）
@@ -807,6 +859,14 @@ namespace ChappyTalk
             if (!string.IsNullOrWhiteSpace(rest))
             {
                 await Speak(rest);
+            }
+            if (useEnding && text.Contains(endingText))
+            {
+                if (chappyGetUp)
+                {
+                    OutputTextMessage("💤 あなたの相棒はもう寝ちゃいました...");
+                }
+                chappyGetUp = false;
             }
         }
 

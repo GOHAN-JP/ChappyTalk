@@ -16,6 +16,10 @@ namespace ChappyTalk
             ApiKeyBox.Password = settings.OpenAiApiKey;
             AivisUrlBox.Text = settings.AivisUrl;
             SaveFolderBox.Text = settings.SaveFolder;
+            CheckOpeningWords.IsChecked = settings.UseOpening;
+            TextBoxOpening.Text = settings.OpeningText;
+            CheckEndingWords.IsChecked = settings.UseEnding;
+            TextBoxEnding.Text = settings.EndingText;
             SpeedSlider.Value = settings.SpeedScale;
             PitchSlider.Value = settings.PitchScale;
             IntonationSlider.Value = settings.IntonationScale;
@@ -78,6 +82,10 @@ namespace ChappyTalk
                 OpenAiApiKey = ApiKeyBox.Password,
                 AivisUrl = AivisUrlBox.Text,
                 SaveFolder = SaveFolderBox.Text,
+                UseOpening = CheckOpeningWords.IsChecked == true,
+                OpeningText = TextBoxOpening.Text,
+                UseEnding = CheckEndingWords.IsChecked == true,
+                EndingText = TextBoxEnding.Text,
                 SpeedScale = SpeedSlider.Value,
                 PitchScale = PitchSlider.Value,
                 IntonationScale = IntonationSlider.Value,
