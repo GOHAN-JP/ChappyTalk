@@ -483,6 +483,16 @@ namespace ChappyTalk
                 isPaused = false;
             }
         }
+        // 再生開始前の準備：テキストを行ごとに分割して配列に格納
+        private void ResetPlayLines()
+        {
+            playLines = OutputText.Text
+            .Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
+            .Select(line => line.Trim()) // 各行の端っこにある余計なゴミを消す
+            .ToArray();
+            playLines = OutputText.Text.Split('\n');
+            OutputText.CaretIndex = OutputText.Text.Length;
+        }
         // 各行の開始位置を事前に計算しておく（WPFの行機能は使わない）
         private void CalculateLineStartIndices()
         {
@@ -524,15 +534,6 @@ namespace ChappyTalk
         {
             _logPlaybackCts?.Cancel();
             OutputTextMessage("");
-        }
-        private void ResetPlayLines()
-        {
-            playLines = OutputText.Text
-            .Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
-            .Select(line => line.Trim()) // 各行の端っこにある余計なゴミを消す
-            .ToArray();
-            playLines = OutputText.Text.Split('\n');
-            OutputText.CaretIndex = OutputText.Text.Length;
         }
 
         // ==============================
